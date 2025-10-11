@@ -11,9 +11,10 @@ class User:
         self.role = role
 
 class PatientNote:
-    """Class for patient notes, accommodating different sources."""
-    def __init__(self, patient_id, author_id, mood, pain, appetite, notes, diagnoses, source="clinician"):
+    """Class for patient notes, now requiring a hospital_id."""
+    def __init__(self, patient_id, author_id, mood, pain, appetite, notes, diagnoses, source, hospital_id):
         self.note_id = datetime.now().strftime("%Y%m%d%H%M%S")
+        self.hospital_id = hospital_id
         self.patient_id = patient_id
         self.author_id = author_id
         self.timestamp = datetime.now().isoformat()

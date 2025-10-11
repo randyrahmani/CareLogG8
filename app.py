@@ -1,3 +1,5 @@
+# carelog/app.py
+
 import streamlit as st
 from modules.auth import CareLogService
 import gui
@@ -5,7 +7,7 @@ import gui
 # --- Page Configuration ---
 st.set_page_config(
     page_title="CareLog",
-    page_icon="🩺",
+    page_icon="🏥",
     layout="wide"
 )
 
@@ -20,18 +22,17 @@ service = get_carelog_service()
 # --- Session State Management ---
 if 'current_user' not in st.session_state:
     st.session_state.current_user = None
-
-# NEW: Add a state for the authentication page
+if 'hospital_id' not in st.session_state:
+    st.session_state.hospital_id = None
 if 'auth_page' not in st.session_state:
     st.session_state.auth_page = 'welcome'
 
-
 # --- Main App Router ---
-if st.session_state.current_user:
-    # If a user is logged in, show the main application.
+if st.session_state.current_user and st.session_state.hospital_id:
+    # If a user is logged in AND a hospital is selected, show the main application.
     gui.show_main_app(service)
 else:
-    # If no user is logged in, route to the correct auth page
+    # Route to the correct multi-step authentication page
     if st.session_state.auth_page == 'welcome':
         gui.show_welcome_page()
     elif st.session_state.auth_page == 'login':
