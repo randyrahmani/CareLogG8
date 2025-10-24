@@ -7,7 +7,6 @@ import gui
 # --- Page Configuration ---
 st.set_page_config(
     page_title="CareLog",
-    page_icon="🏥",
     layout="wide"
 )
 

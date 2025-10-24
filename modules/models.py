@@ -1,6 +1,7 @@
 # carelog/modules/models.py
 
 from datetime import datetime
+import uuid
 
 class User:
     """Base class for a user."""
@@ -13,7 +14,7 @@ class User:
 class PatientNote:
     """Class for patient notes, now requiring a hospital_id."""
     def __init__(self, patient_id, author_id, mood, pain, appetite, notes, diagnoses, source, hospital_id):
-        self.note_id = datetime.now().strftime("%Y%m%d%H%M%S")
+        self.note_id = str(uuid.uuid4())
         self.hospital_id = hospital_id
         self.patient_id = patient_id
         self.author_id = author_id
