@@ -108,8 +108,8 @@ def show_welcome_page():
     """Displays a welcome screen with buttons to navigate."""
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<h1 style='text-align: center;'>Welcome to CareLog 🏥</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center;'>A multi-hospital platform for empathetic logging.</p>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center;'>Welcome to CareLog </h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center;'>A multi-hospital platform for patient care.</p>", unsafe_allow_html=True)
         st.info("To begin, please select an option below. You will be asked for your hospital's unique ID.")
         
         st.button("Login to an Existing Account", on_click=set_page_login, width='stretch', type="primary")
@@ -136,7 +136,7 @@ def show_login_form(service):
                         time.sleep(1)
                         user = service.login(username, password, role, hospital_id)
                         if user == 'pending':
-                            st.warning("Your account creation is successful but pending approval by an administrator.")
+                            st.warning("Your account creation is successful but is pending approval by an administrator.")
                         elif user:
                             st.session_state.current_user = user
                             st.session_state.hospital_id = hospital_id
@@ -156,7 +156,11 @@ def show_register_form(service):
             role = st.selectbox("Select your role", ["patient", "clinician", "admin"])
             hospital_id = st.text_input("Hospital ID", help="If your hospital is new, this will create it. If it exists, you will join it.")
             username = st.text_input("Choose a Username")
-            password = st.text_input("Choose a Password", type="password")
+            password = st.text_input(
+                "Choose a Password",
+                type="password",
+                help="Use at least 8 characters with uppercase, lowercase, number, and symbol."
+            )
             
             st.markdown("---")
             dob = st.date_input("Date of Birth", min_value=datetime.date(1900, 1, 1))
@@ -173,14 +177,16 @@ def show_register_form(service):
                     with st.spinner("Registering..."):
                         time.sleep(1)
                         result = service.register_user(username, password, role, hospital_id, full_name, dob.isoformat(), sex, pronouns, bio)
-                        if result == 'pending':
+                        if result == 'weak_password':
+                            st.error("Password must be at least 8 characters and include uppercase, lowercase, number, and symbol.")
+                        elif result == 'pending':
                             st.info("Your account registration is successful but pending approval by an administrator.")
                         elif result == 'hospital_not_found':
-                            st.error(f"Hospital with ID '{hospital_id}' does not exist. An admin must create it first.")
+                            st.error(f"Hospital with ID {hospital_id} does not exist. An admin must create it first.")
                         elif result:
-                            st.success(f"User '{username}' registered for '{hospital_id}'! Please go back to log in.")
+                            st.success(f"User {username} registered for {hospital_id}! Please go back to log in.")
                         else:
-                            st.error(f"A profile for username '{username}' with the role '{role}' already exists at this hospital.")
+                            st.error(f"A profile for username {username} with the role {role} already exists at this hospital.")
 
 # --- Main Application UI ---
 
@@ -207,6 +213,21 @@ def show_main_app(service):
             st.markdown(f"## {title} — {user.full_name or user.username}")
             st.caption(f"Hospital ID: {hospital_id}")
             st.divider()
+            st.markdown(
+                """
+                <style>
+                div.stButton > button {
+                    background-color: #3883eb !important;
+                    color: #ffffff !important;
+                    border-color: #3883eb !important;
+                }
+                div.stButton > button:hover {
+                    filter: brightness(0.95);
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
             for idx, (label, value, description) in enumerate(options):
                 button_key = f"{user.role}_menu_btn_{idx}"
                 if st.button(label, key=button_key, use_container_width=True):
@@ -730,8 +751,6 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
 
             if source == "patient":
                 expander_title = f"Patient Entry from {timestamp} {privacy_icon}"
-                if user.role != 'patient':
-                    st.info(f"Entry from Patient: {author}")
                 if note.get('is_private') and user.role != 'patient':
                     st.write("This note is private and cannot be viewed.")
                     continue
@@ -740,7 +759,6 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                     continue
                 hidden_suffix = " [Clinicians Only]" if hidden_from_patient else ""
                 expander_title = f"Clinical Note from {timestamp} (by {author}){hidden_suffix}"
-                st.warning(f"Note from Clinician: {author}")
             
             with st.expander(expander_title):
                 # Use .get() with default values for all note fields to prevent crashes

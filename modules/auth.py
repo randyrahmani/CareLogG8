@@ -52,6 +52,8 @@ class CareLogService:
             chats.setdefault('direct', {})
 
     def register_user(self, username, password, role, hospital_id, full_name, dob, sex, pronouns, bio):
+        if not self._is_strong_password(password):
+            return 'weak_password'
         is_new_hospital = hospital_id not in self._data['hospitals']
 
         # Enforce that only an admin can create a new hospital
@@ -103,6 +105,15 @@ class CareLogService:
         if status == 'pending':
             return 'pending'
         return True
+
+    def _is_strong_password(self, password: str) -> bool:
+        if len(password) < 8:
+            return False
+        has_upper = any(c.isupper() for c in password)
+        has_lower = any(c.islower() for c in password)
+        has_digit = any(c.isdigit() for c in password)
+        has_special = any(not c.isalnum() for c in password)
+        return has_upper and has_lower and has_digit and has_special
 
     def login(self, username, password, role, hospital_id):
         hospital_data = self._data['hospitals'].get(hospital_id)
@@ -357,9 +368,13 @@ class CareLogService:
         del hospital_users[user_key]
 
         # Clean up related data
+        chats = hospital.setdefault('chats', {"general": {}, "direct": {}})
+
         if role == 'patient':
             notes = hospital.get('notes', [])
             hospital['notes'] = [n for n in notes if n.get('patient_id') != username]
+            chats.get('general', {}).pop(username, None)
+            chats.get('direct', {}).pop(username, None)
         elif role == 'clinician':
             # Remove clinician from any patient assignments
             for data in hospital_users.values():
@@ -373,6 +388,30 @@ class CareLogService:
                 n for n in notes
                 if not (n.get('author_id') == username and n.get('source') == 'clinician')
             ]
+            # Remove clinician conversations
+            direct_threads = chats.get('direct', {})
+            for patient_username, threads in direct_threads.items():
+                if username in threads:
+                    del threads[username]
+            # Remove clinician messages from general channels
+            general_threads = chats.get('general', {})
+            for patient_username, messages in general_threads.items():
+                general_threads[patient_username] = [
+                    msg for msg in messages if msg.get('sender') != username
+                ]
+        else:
+            # Remove admin messages from chats (if any were recorded)
+            general_threads = chats.get('general', {})
+            for patient_username, messages in general_threads.items():
+                general_threads[patient_username] = [
+                    msg for msg in messages if msg.get('sender') != username
+                ]
+            direct_threads = chats.get('direct', {})
+            for patient_username, threads in direct_threads.items():
+                for clinician_username, messages in list(threads.items()):
+                    threads[clinician_username] = [
+                        msg for msg in messages if msg.get('sender') != username
+                    ]
 
         self._save_data()
         return True
