@@ -370,7 +370,7 @@ def show_main_app(service):
 
     elif user.role == 'patient':
         menu_items = [
-            ("Add Entry", "patient_add_entry", "Log how you feel today—including mood, pain, and appetite."),
+            ("Add Entry", "patient_add_entry", "Log how you feel today, including mood, pain, and appetite."),
             ("View Notes", "patient_view_notes", "See your full care history and any clinician notes."),
             ("Messaging", "patient_messaging", "Reach your care team or chat privately with assigned clinicians."),
             ("My Profile", "patient_profile", "Edit your personal information and preferences."),

@@ -1,14 +1,10 @@
 # CareLog: A Secure, Multi-Hospital Patient Care Platform
 
-[![Python Version](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Framework](https://img.shields.io/badge/framework-Streamlit-ff4b4b)](https://streamlit.io)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
 CareLog is a comprehensive, multi-hospital web application designed to facilitate seamless communication and data management between patients, clinicians, and administrators. Built with Python and Streamlit, it provides a secure, role-based environment for logging patient notes, managing care, and leveraging AI for supportive feedback.
 
 ---
 
-## 🌟 Key Features
+## Key Features
 
 CareLog offers a distinct set of features tailored to each user role, ensuring a focused and efficient user experience.
 
@@ -46,7 +42,7 @@ CareLog offers a distinct set of features tailored to each user role, ensuring a
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 *   **Backend & Frontend**: Python, Streamlit
 *   **AI & Generative Language**: Google Gemini API (`gemma-3-27b-it`)
@@ -57,7 +53,7 @@ CareLog offers a distinct set of features tailored to each user role, ensuring a
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 Follow these steps to set up and run the CareLog application on your local machine.
 
@@ -116,7 +112,7 @@ The application will open in your default web browser.
 
 ---
 
-## ⚙️ Application Flow and Usage
+## Application Flow and Usage
 
 ### First Run
 
@@ -143,7 +139,7 @@ This first admin account is automatically approved and can now manage the newly 
 
 ---
 
-## 🔒 Security
+## Security
 
 Security is a core design principle of CareLog.
 
@@ -154,7 +150,7 @@ Security is a core design principle of CareLog.
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 CareLogG8/
@@ -173,22 +169,3 @@ CareLogG8/
 ├── requirements.txt        # Python dependencies
 └── README.md               # This file
 ```
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! If you have suggestions for improvements or want to report a bug, please feel free to open an issue or submit a pull request.
-
-1.  Fork the repository.
-2.  Create a new branch (`git checkout -b feature/YourFeature`).
-3.  Make your changes.
-4.  Commit your changes (`git commit -m 'Add some feature'`).
-5.  Push to the branch (`git push origin feature/YourFeature`).
-6.  Open a Pull Request.
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details.
