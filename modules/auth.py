@@ -3,10 +3,11 @@
 import json
 import hashlib
 import os
+from cryptography.fernet import InvalidToken
 from modules.encryption import encryptor
 from modules.models import User, PatientNote
 from modules.gemini import generate_feedback
-from cryptography.fernet import InvalidToken
+from modules.chat import ChatService
 
 DATA_FILE = 'records.json'
 
@@ -14,6 +15,8 @@ class CareLogService:
     def __init__(self):
         self.current_user = None
         self._data = self._load_data()
+        self._ensure_hospital_defaults()
+        self.chat = ChatService(self)
 
     def _load_data(self):
         try:
@@ -22,7 +25,10 @@ class CareLogService:
                 if not encrypted_data:
                     return {"hospitals": {}}
                 decrypted_data = encryptor.decrypt(encrypted_data.encode()).decode()
-                return json.loads(decrypted_data)
+                data = json.loads(decrypted_data)
+                if 'hospitals' not in data:
+                    data['hospitals'] = {}
+                return data
         except (FileNotFoundError, InvalidToken, json.JSONDecodeError) as e:
             # If the file doesn't exist, is corrupt, or not valid JSON, start fresh.
             # In a real-world app, you might want to log this error or alert the admin.
@@ -35,6 +41,16 @@ class CareLogService:
             encrypted_data = encryptor.encrypt(data_to_encrypt.encode())
             f.write(encrypted_data.decode())
 
+    def _ensure_hospital_defaults(self):
+        hospitals = self._data.setdefault('hospitals', {})
+        for hospital_id, hospital_data in hospitals.items():
+            hospital_data.setdefault('users', {})
+            hospital_data.setdefault('notes', [])
+            hospital_data.setdefault('alerts', [])
+            chats = hospital_data.setdefault('chats', {})
+            chats.setdefault('general', {})
+            chats.setdefault('direct', {})
+
     def register_user(self, username, password, role, hospital_id, full_name, dob, sex, pronouns, bio):
         is_new_hospital = hospital_id not in self._data['hospitals']
 
@@ -43,7 +59,17 @@ class CareLogService:
             return 'hospital_not_found'
 
         if is_new_hospital:
-            self._data['hospitals'][hospital_id] = {"users": {}, "notes": [], "alerts": []}
+            self._data['hospitals'][hospital_id] = {
+                "users": {},
+                "notes": [],
+                "alerts": [],
+                "chats": {
+                    "general": {},
+                    "direct": {}
+                }
+            }
+        else:
+            self._ensure_hospital_defaults()
         
         hospital_users = self._data['hospitals'][hospital_id]['users']
         user_key = f"{username}_{role}"
@@ -320,6 +346,11 @@ class CareLogService:
     def get_all_clinicians(self, hospital_id):
         hospital_users = self._data['hospitals'].get(hospital_id, {}).get('users', {})
         return [data for data in hospital_users.values() if data.get('role') == 'clinician' and data.get('status') == 'approved']
+
+    def get_assigned_clinicians_for_patient(self, hospital_id, patient_username):
+        patient_key = f"{patient_username}_patient"
+        patient_data = self._data['hospitals'].get(hospital_id, {}).get('users', {}).get(patient_key, {})
+        return patient_data.get('assigned_clinicians', []) or []
 
     def assign_clinician_to_patient(self, hospital_id, patient_username, clinician_username):
         patient_key = f"{patient_username}_patient"

@@ -7,6 +7,75 @@ import datetime
 import time
 import pandas as pd
 
+def _rerun():
+    """Triggers a rerun via the available Streamlit API."""
+    rerun_callable = getattr(st, "experimental_rerun", None)
+    if callable(rerun_callable):
+        rerun_callable()
+    else:
+        st.rerun()
+
+def _format_timestamp(timestamp_str):
+    """Converts an ISO string into a human-readable local timestamp."""
+    if not timestamp_str:
+        return "Unknown time"
+    try:
+        clean_value = timestamp_str.replace('Z', '+00:00')
+        timestamp = datetime.datetime.fromisoformat(clean_value)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=datetime.timezone.utc)
+        local_timestamp = timestamp.astimezone()
+        return local_timestamp.strftime("%b %d, %Y • %H:%M")
+    except ValueError:
+        return timestamp_str
+
+def _chat_auto_refresh_toggle(state_key, label, default=True):
+    """Renders a checkbox that toggles auto-refresh behaviour for chats."""
+    if state_key not in st.session_state:
+        st.session_state[state_key] = default
+    return st.checkbox(label, key=state_key)
+
+def _maybe_trigger_auto_refresh(enabled, seconds=3.0):
+    """Triggers a timed rerun when auto-refresh is enabled."""
+    if enabled:
+        st.caption(f"Auto-refreshing every {int(seconds)} seconds.")
+        time.sleep(seconds)
+        _rerun()
+    else:
+        st.caption("Auto-refresh is paused.")
+
+def _get_display_name(service, hospital_id, username, role, cache):
+    """Looks up a human-readable name for chat participants."""
+    cache_key = (username, role)
+    if cache_key in cache:
+        return cache[cache_key]
+    user_data = service.get_user_by_username(hospital_id, username, role)
+    display_name = user_data.get('full_name') if user_data else None
+    if not display_name:
+        display_name = username
+    cache[cache_key] = display_name
+    return display_name
+
+def _render_chat_messages(service, hospital_id, messages):
+    """Displays chat history using Streamlit's chat layout."""
+    if not messages:
+        st.info("No messages yet. Start the conversation below.")
+        return
+
+    name_cache = {}
+    for message in messages:
+        sender = message.get('sender')
+        role = message.get('sender_role', 'patient')
+        display_name = _get_display_name(service, hospital_id, sender, role, name_cache)
+        role_label = "Patient" if role == 'patient' else 'Clinician'
+        timestamp_display = _format_timestamp(message.get('timestamp'))
+        bubble_role = "user" if role == 'patient' else 'assistant'
+
+        with st.chat_message(bubble_role):
+            st.markdown(f"**{display_name}** · {role_label}")
+            st.write(message.get('text', ''))
+            st.caption(timestamp_display)
+
 # --- Page navigation helpers ---
 def set_page_welcome():
     st.session_state.auth_page = 'welcome'
@@ -145,7 +214,7 @@ def show_main_app(service):
             st.sidebar.divider()
 
         # Navigation
-        pages = ["View Patient Notes", "Add Patient Note", "Review AI Feedback", "Pain Alerts", "My Profile"]
+        pages = ["View Patient Notes", "Add Patient Note", "Patient Messaging", "Review AI Feedback", "Pain Alerts", "My Profile"]
         if st.session_state.page not in pages: st.session_state.page = "View Patient Notes"
         page_selection = st.sidebar.radio("Navigation", pages, index=pages.index(st.session_state.page))
         if page_selection != st.session_state.page:
@@ -158,6 +227,8 @@ def show_main_app(service):
             _render_add_note_page(service, hospital_id)
         elif st.session_state.page == "View Patient Notes":
             _render_view_notes_page(service, hospital_id)
+        elif st.session_state.page == "Patient Messaging":
+            _render_clinician_chat_page(service, hospital_id)
         elif st.session_state.page == "Review AI Feedback":
             _render_review_feedback_page(service, hospital_id)
         elif st.session_state.page == "Pain Alerts":
@@ -166,7 +237,7 @@ def show_main_app(service):
             _render_profile_page(service, hospital_id)
 
     elif user.role == 'patient':
-        pages = ["Add My Entry", "View My Notes", "My Profile"]
+        pages = ["Add My Entry", "View My Notes", "Messaging", "My Profile"]
         if st.session_state.page not in pages: st.session_state.page = "Add My Entry"
         page_selection = st.sidebar.radio("Navigation", pages, index=pages.index(st.session_state.page))
         if page_selection != st.session_state.page:
@@ -179,6 +250,8 @@ def show_main_app(service):
             _render_view_notes_page(service, hospital_id, patient_id=user.username)
         elif st.session_state.page == "Add My Entry":
             _render_add_patient_entry_page(service, hospital_id)
+        elif st.session_state.page == "Messaging":
+            _render_patient_chat_page(service, hospital_id)
         elif st.session_state.page == "My Profile":
             _render_profile_page(service, hospital_id)
 
@@ -254,6 +327,146 @@ def _display_user_profile_details(user_data):
     st.write(f"**Pronouns:** {user_data.get('pronouns', 'N/A')}")
     st.write(f"**Bio:**")
     st.info(user_data.get('bio') or "_No bio provided._")
+
+def _render_patient_chat_page(service, hospital_id):
+    st.markdown("<h2 style='text-align: center;'>Secure Messaging</h2>", unsafe_allow_html=True)
+    chat_service = getattr(service, 'chat', None)
+    if not chat_service:
+        st.error("Chat service is currently unavailable.")
+        return
+
+    user = st.session_state.current_user
+    st.info("Use the care team channel to reach any approved clinician. Direct messages go straight to a specific clinician assigned to you.")
+    auto_enabled = _chat_auto_refresh_toggle("patient_chat_auto_refresh", "Auto-refresh every 3 seconds")
+
+    care_tab, direct_tab = st.tabs(["Care Team Channel", "Direct Messages"])
+
+    with care_tab:
+        st.subheader("Care Team Channel")
+        messages = chat_service.get_general_messages(hospital_id, user.username)
+        _render_chat_messages(service, hospital_id, messages)
+
+        general_message = st.chat_input("Send a message to your care team", key="patient_general_chat_input")
+        if general_message:
+            chat_service.add_general_message(
+                hospital_id,
+                user.username,
+                user.username,
+                user.role,
+                general_message
+            )
+            _rerun()
+
+    with direct_tab:
+        st.subheader("Direct Messages With Assigned Clinicians")
+        assigned_clinicians = service.get_assigned_clinicians_for_patient(hospital_id, user.username)
+
+        if not assigned_clinicians:
+            st.info("You don't have any clinicians assigned yet. Once assigned, you can chat with them here.")
+        else:
+            clinician_map = {}
+            for clinician_username in assigned_clinicians:
+                clinician_data = service.get_user_by_username(hospital_id, clinician_username, 'clinician')
+                full_name = clinician_data.get('full_name') if clinician_data else None
+                clinician_map[clinician_username] = full_name or clinician_username
+
+            selected_clinician = st.selectbox(
+                "Select a clinician",
+                assigned_clinicians,
+                format_func=lambda username: clinician_map.get(username, username),
+                key="patient_direct_chat_clinician"
+            )
+
+            if selected_clinician:
+                messages = chat_service.get_direct_messages(hospital_id, user.username, selected_clinician)
+                _render_chat_messages(service, hospital_id, messages)
+
+                prompt_name = clinician_map.get(selected_clinician, selected_clinician)
+                direct_message = st.chat_input(f"Message {prompt_name}", key="patient_direct_chat_input")
+                if direct_message:
+                    chat_service.add_direct_message(
+                        hospital_id,
+                        user.username,
+                        selected_clinician,
+                        user.username,
+                        user.role,
+                        direct_message
+                    )
+                    _rerun()
+
+    _maybe_trigger_auto_refresh(auto_enabled)
+
+def _render_clinician_chat_page(service, hospital_id):
+    st.markdown("<h2 style='text-align: center;'>Patient Messaging</h2>", unsafe_allow_html=True)
+    chat_service = getattr(service, 'chat', None)
+    if not chat_service:
+        st.error("Chat service is currently unavailable.")
+        return
+
+    user = st.session_state.current_user
+    patients = service.get_all_patients(hospital_id)
+    if not patients:
+        st.info("No patients assigned to you yet.")
+        return
+
+    patient_map = {}
+    for patient in patients:
+        username = patient.get('username')
+        full_name = patient.get('full_name')
+        patient_map[username] = full_name or username
+
+    patient_usernames = list(patient_map.keys())
+    selected_patient = st.selectbox(
+        "Select a patient",
+        patient_usernames,
+        format_func=lambda username: patient_map.get(username, username),
+        key="clinician_chat_patient"
+    )
+
+    st.info("Respond in the care team channel to keep everyone informed, or send a direct note the patient sees immediately.")
+    auto_enabled = _chat_auto_refresh_toggle("clinician_chat_auto_refresh", "Auto-refresh every 3 seconds")
+
+    care_tab, direct_tab = st.tabs(["Care Team Channel", "Direct Message"])
+
+    with care_tab:
+        st.subheader("Care Team Channel")
+        messages = chat_service.get_general_messages(hospital_id, selected_patient)
+        _render_chat_messages(service, hospital_id, messages)
+
+        general_prompt = f"Message {patient_map.get(selected_patient, selected_patient)}'s care team"
+        general_message = st.chat_input(general_prompt, key="clinician_general_chat_input")
+        if general_message:
+            chat_service.add_general_message(
+                hospital_id,
+                selected_patient,
+                user.username,
+                user.role,
+                general_message
+            )
+            _rerun()
+
+    with direct_tab:
+        st.subheader("Direct Message With Patient")
+        messages = chat_service.get_direct_messages(hospital_id, selected_patient, user.username)
+        _render_chat_messages(service, hospital_id, messages)
+
+        direct_prompt = f"Message {patient_map.get(selected_patient, selected_patient)}"
+        direct_message = st.chat_input(direct_prompt, key="clinician_direct_chat_input")
+        if direct_message:
+            entry = chat_service.add_direct_message(
+                hospital_id,
+                selected_patient,
+                user.username,
+                user.username,
+                user.role,
+                direct_message
+            )
+            if entry:
+                _rerun()
+            else:
+                st.warning("You can only send direct messages to patients assigned to you.")
+
+    _maybe_trigger_auto_refresh(auto_enabled)
 
 def _render_add_note_page(service, hospital_id):
     st.markdown("<h2 style='text-align: center;'>Add a New Patient Note</h2>", unsafe_allow_html=True)
