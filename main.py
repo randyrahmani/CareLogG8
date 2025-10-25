@@ -1,4 +1,4 @@
-# carelog/app.py
+# carelog/main.py
 
 import streamlit as st
 from modules.auth import CareLogService

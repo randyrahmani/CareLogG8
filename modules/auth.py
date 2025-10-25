@@ -343,6 +343,40 @@ class CareLogService:
                 return True
         return False
 
+    def delete_user(self, hospital_id, username, role):
+        hospital = self._data['hospitals'].get(hospital_id)
+        if not hospital:
+            return False
+
+        hospital_users = hospital.get('users', {})
+        user_key = f"{username}_{role}"
+        if user_key not in hospital_users:
+            return False
+
+        # Remove the user entry
+        del hospital_users[user_key]
+
+        # Clean up related data
+        if role == 'patient':
+            notes = hospital.get('notes', [])
+            hospital['notes'] = [n for n in notes if n.get('patient_id') != username]
+        elif role == 'clinician':
+            # Remove clinician from any patient assignments
+            for data in hospital_users.values():
+                if data.get('role') == 'patient':
+                    assigned = data.get('assigned_clinicians', [])
+                    if assigned and username in assigned:
+                        assigned.remove(username)
+            # Remove clinician-authored notes
+            notes = hospital.get('notes', [])
+            hospital['notes'] = [
+                n for n in notes
+                if not (n.get('author_id') == username and n.get('source') == 'clinician')
+            ]
+
+        self._save_data()
+        return True
+
     def get_all_clinicians(self, hospital_id):
         hospital_users = self._data['hospitals'].get(hospital_id, {}).get('users', {})
         return [data for data in hospital_users.values() if data.get('role') == 'clinician' and data.get('status') == 'approved']

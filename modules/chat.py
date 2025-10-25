@@ -69,6 +69,15 @@ class ChatService:
         self._service._save_data()
         return entry
 
+    def clear_general_messages(self, hospital_id: str, patient_username: str) -> bool:
+        chats = self._ensure_chat_store(hospital_id)
+        general = chats.setdefault('general', {})
+        if patient_username in general:
+            general[patient_username] = []
+            self._service._save_data()
+            return True
+        return False
+
     def get_general_messages(
         self,
         hospital_id: str,
@@ -126,6 +135,16 @@ class ChatService:
         if limit is not None:
             return thread[-limit:]
         return thread
+
+    def clear_direct_messages(self, hospital_id: str, patient_username: str, clinician_username: str) -> bool:
+        chats = self._ensure_chat_store(hospital_id)
+        direct = chats.setdefault('direct', {})
+        patient_threads = direct.setdefault(patient_username, {})
+        if clinician_username in patient_threads:
+            patient_threads[clinician_username] = []
+            self._service._save_data()
+            return True
+        return False
 
     def list_general_patients(self, hospital_id: str) -> List[str]:
         """Lists patients with activity on the general channel, newest first."""

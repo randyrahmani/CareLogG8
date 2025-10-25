@@ -55,19 +55,42 @@ def _render_chat_messages(service, hospital_id, messages):
         return
 
     name_cache = {}
-    for message in messages:
-        sender = message.get('sender')
-        role = message.get('sender_role', 'patient')
-        display_name = _get_display_name(service, hospital_id, sender, role, name_cache)
-        role_label = "Patient" if role == 'patient' else 'Clinician'
-        timestamp_display = _format_timestamp(message.get('timestamp'))
-        bubble_role = "user" if role == 'patient' else 'assistant'
-        avatar = "🙂" if role == 'patient' else "🩺"
+    chat_container = st.container()
+    with chat_container:
+        st.markdown(
+            """
+            <style>
+            div[data-testid="chat-history-wrapper"] {
+                max-height: 350px;
+                overflow-y: auto;
+                padding-right: 12px;
+            }
+            div[data-testid="chat-history-wrapper"]::-webkit-scrollbar {
+                width: 8px;
+            }
+            div[data-testid="chat-history-wrapper"]::-webkit-scrollbar-thumb {
+                background-color: rgba(155, 155, 155, 0.4);
+                border-radius: 4px;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        chat_wrapper = st.markdown('<div data-testid="chat-history-wrapper">', unsafe_allow_html=True)
+        for message in messages:
+            sender = message.get('sender')
+            role = message.get('sender_role', 'patient')
+            display_name = _get_display_name(service, hospital_id, sender, role, name_cache)
+            role_label = "Patient" if role == 'patient' else 'Clinician'
+            timestamp_display = _format_timestamp(message.get('timestamp'))
+            bubble_role = "user" if role == 'patient' else 'assistant'
+            avatar = "🙂" if role == 'patient' else "🩺"
 
-        with st.chat_message(bubble_role, avatar=avatar):
-            st.markdown(f"**{display_name}** · {role_label}")
-            st.write(message.get('text', ''))
-            st.caption(timestamp_display)
+            with st.chat_message(bubble_role, avatar=avatar):
+                st.markdown(f"**{display_name}** · {role_label}")
+                st.write(message.get('text', ''))
+                st.caption(timestamp_display)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # --- Page navigation helpers ---
 def set_page_welcome():
@@ -166,145 +189,138 @@ def show_main_app(service):
     user = st.session_state.current_user
     hospital_id = st.session_state.hospital_id
 
-    st.sidebar.title(f"Welcome, {user.username}!")
-    st.sidebar.info(f"**Hospital:** {hospital_id}")
-    st.sidebar.write(f"**Role:** {user.role.capitalize()}")
-    
-    if st.sidebar.button("Logout"):
-        with st.spinner("Logging out..."):
-            time.sleep(1)
-            service.logout()
-            st.session_state.current_user = None
-            st.session_state.hospital_id = None
-            st.session_state.auth_page = 'welcome'
-            st.rerun()
-
-    st.sidebar.divider()
-
     # Page router
     if 'page' not in st.session_state:
         st.session_state.page = None
-    if 'page_placeholder' not in st.session_state:
-        st.session_state.page_placeholder = st.empty()
 
     # Reset page state if role changes or on first load
     if 'current_role' not in st.session_state or st.session_state.current_role != user.role:
         st.session_state.page = None
         st.session_state.current_role = user.role
-        for key in ("nav_state_clinician", "nav_state_patient", "nav_state_admin"):
-            st.session_state.pop(key, None)
-        st.session_state.page_placeholder.empty()
-        st.session_state.page_placeholder = st.empty()
+
+    menu_placeholder = st.empty()
+
+    def _show_main_menu(options, title, banner_message=None):
+        with menu_placeholder.container():
+            if banner_message:
+                st.warning(banner_message)
+            st.markdown(f"## {title} — {user.full_name or user.username}")
+            st.caption(f"Hospital ID: {hospital_id}")
+            st.divider()
+            for idx, (label, value, description) in enumerate(options):
+                button_key = f"{user.role}_menu_btn_{idx}"
+                if st.button(label, key=button_key, use_container_width=True):
+                    st.session_state.page = value
+                    st.rerun()
+                st.caption(description)
+                st.divider()
+            if st.button("Log Out", key=f"{user.role}_logout_btn", use_container_width=True):
+                with st.spinner("Logging out..."):
+                    time.sleep(1)
+                    service.logout()
+                    st.session_state.current_user = None
+                    st.session_state.hospital_id = None
+                    st.session_state.auth_page = 'welcome'
+                    st.rerun()
+
+    def _show_back_button():
+        if st.button("← Back to Main Menu"):
+            st.session_state.page = None
+            st.rerun()
 
     if user.role == 'clinician':
-        pages = ["View Patient Notes", "Add Patient Note", "Patient Messaging", "Review AI Feedback", "Pain Alerts", "My Profile"]
-        default_page = "View Patient Notes"
-        nav_state_key = f"nav_state_{user.role}"
-        if st.session_state.page not in pages:
-            st.session_state.page = default_page
-        if nav_state_key not in st.session_state or st.session_state[nav_state_key] not in pages:
-            st.session_state[nav_state_key] = st.session_state.page
-
-        # Display alerts for clinicians
-        alerts = service.get_pain_alerts(hospital_id)
-        if alerts:
-            st.sidebar.subheader(f"🚨 {len(alerts)} High-Priority Alerts")
-            for alert in sorted(alerts, key=lambda x: x.get('timestamp', ''), reverse=True):
-                timestamp_str = alert.get('timestamp')
-                timestamp = datetime.datetime.fromisoformat(timestamp_str).strftime('%H:%M') if timestamp_str else "Time N/A"
-                st.sidebar.error(f"**{alert.get('patient_id')}** at {timestamp}")
-            if st.sidebar.button("Manage Alerts"):
-                with st.spinner("Loading..."):
-                    time.sleep(1)
-                    st.session_state.page = "Pain Alerts"
-                    st.session_state[nav_state_key] = "Pain Alerts"
-                    st.rerun()
-            st.sidebar.divider()
-
-        # Navigation
-        page_selection = st.sidebar.radio("Navigation", pages, index=pages.index(st.session_state[nav_state_key]))
-        if page_selection != st.session_state.page:
-            st.session_state.page = page_selection
-            st.session_state[nav_state_key] = page_selection
-            st.session_state.page_placeholder.empty()
-            st.session_state.page_placeholder = st.empty()
-            st.rerun()
+        menu_items = [
+            ("View Notes", "clinician_view_notes", "Browse patients' histories, search within notes, and review profiles."),
+            ("Add Note", "clinician_add_note", "Log a new clinical observation for any assigned patient."),
+            ("Messaging", "clinician_messaging", "Chat with patients in real time or leave care-team updates."),
+            ("AI Feedback", "clinician_feedback", "Review and finalize AI-generated responses before sending."),
+            ("Pain Alerts", "clinician_alerts", "Respond to any critical 10/10 pain alerts reported by patients."),
+            ("My Profile", "clinician_profile", "Update your personal and professional details."),
+        ]
+        if st.session_state.page is None:
+            alerts = service.get_pain_alerts(hospital_id)
+            banner = f"🚨 {len(alerts)} high-priority alerts awaiting review." if alerts else None
+            _show_main_menu(menu_items, "Clinician Dashboard", banner_message=banner)
+            return
+            return
         else:
-            st.session_state[nav_state_key] = page_selection
+            menu_placeholder.empty()
 
-        placeholder = st.session_state.page_placeholder
-        placeholder.empty()
-        with st.session_state.page_placeholder.container():
-            if st.session_state.page == "Add Patient Note":
-                _render_add_note_page(service, hospital_id)
-            elif st.session_state.page == "View Patient Notes":
-                _render_view_notes_page(service, hospital_id)
-            elif st.session_state.page == "Patient Messaging":
-                _render_clinician_chat_page(service, hospital_id)
-            elif st.session_state.page == "Review AI Feedback":
-                _render_review_feedback_page(service, hospital_id)
-            elif st.session_state.page == "Pain Alerts":
-                _render_pain_alerts_page(service, hospital_id)
-            elif st.session_state.page == "My Profile":
-                _render_profile_page(service, hospital_id)
+        if st.session_state.page == "clinician_view_notes":
+            _show_back_button()
+            _render_view_notes_page(service, hospital_id)
+        elif st.session_state.page == "clinician_add_note":
+            _show_back_button()
+            _render_add_note_page(service, hospital_id)
+        elif st.session_state.page == "clinician_messaging":
+            _show_back_button()
+            _render_clinician_chat_page(service, hospital_id)
+        elif st.session_state.page == "clinician_feedback":
+            _show_back_button()
+            _render_review_feedback_page(service, hospital_id)
+        elif st.session_state.page == "clinician_alerts":
+            _show_back_button()
+            _render_pain_alerts_page(service, hospital_id)
+        elif st.session_state.page == "clinician_profile":
+            _show_back_button()
+            _render_profile_page(service, hospital_id)
+        else:
+            st.session_state.page = None
+            st.rerun()
 
     elif user.role == 'patient':
-        pages = ["Add My Entry", "View My Notes", "Messaging", "My Profile"]
-        default_page = "Add My Entry"
-        nav_state_key = f"nav_state_{user.role}"
-        if st.session_state.page not in pages:
-            st.session_state.page = default_page
-        if nav_state_key not in st.session_state or st.session_state[nav_state_key] not in pages:
-            st.session_state[nav_state_key] = st.session_state.page
-        page_selection = st.sidebar.radio("Navigation", pages, index=pages.index(st.session_state[nav_state_key]))
-        if page_selection != st.session_state.page:
-            st.session_state.page = page_selection
-            st.session_state[nav_state_key] = page_selection
-            st.session_state.page_placeholder.empty()
-            st.session_state.page_placeholder = st.empty()
-            st.rerun()
+        menu_items = [
+            ("Add Entry", "patient_add_entry", "Log how you feel today—including mood, pain, and appetite."),
+            ("View Notes", "patient_view_notes", "See your full care history and any clinician notes."),
+            ("Messaging", "patient_messaging", "Reach your care team or chat privately with assigned clinicians."),
+            ("My Profile", "patient_profile", "Edit your personal information and preferences."),
+        ]
+        if st.session_state.page is None:
+            _show_main_menu(menu_items, "Patient Hub")
+            return
         else:
-            st.session_state[nav_state_key] = page_selection
+            menu_placeholder.empty()
 
-        placeholder = st.session_state.page_placeholder
-        placeholder.empty()
-        with st.session_state.page_placeholder.container():
-            if st.session_state.page == "View My Notes":
-                _render_view_notes_page(service, hospital_id, patient_id=user.username)
-            elif st.session_state.page == "Add My Entry":
-                _render_add_patient_entry_page(service, hospital_id)
-            elif st.session_state.page == "Messaging":
-                _render_patient_chat_page(service, hospital_id)
-            elif st.session_state.page == "My Profile":
-                _render_profile_page(service, hospital_id)
+        if st.session_state.page == "patient_add_entry":
+            _show_back_button()
+            _render_add_patient_entry_page(service, hospital_id)
+        elif st.session_state.page == "patient_view_notes":
+            _show_back_button()
+            _render_view_notes_page(service, hospital_id, patient_id=user.username)
+        elif st.session_state.page == "patient_messaging":
+            _show_back_button()
+            _render_patient_chat_page(service, hospital_id)
+        elif st.session_state.page == "patient_profile":
+            _show_back_button()
+            _render_profile_page(service, hospital_id)
+        else:
+            st.session_state.page = None
+            st.rerun()
 
     elif user.role == 'admin':
-        pages = ["User Management & Export", "Assign Clinicians", "My Profile"]
-        default_page = "User Management & Export"
-        nav_state_key = f"nav_state_{user.role}"
-        if st.session_state.page not in pages:
-            st.session_state.page = default_page
-        if nav_state_key not in st.session_state or st.session_state[nav_state_key] not in pages:
-            st.session_state[nav_state_key] = st.session_state.page
-        page_selection = st.sidebar.radio("Navigation", pages, index=pages.index(st.session_state[nav_state_key]))
-        if page_selection != st.session_state.page:
-            st.session_state.page = page_selection
-            st.session_state[nav_state_key] = page_selection
-            st.session_state.page_placeholder.empty()
-            st.session_state.page_placeholder = st.empty()
-            st.rerun()
+        menu_items = [
+            ("User Management", "admin_users", "Approve new users, edit accounts, and export hospital data."),
+            ("Assign Clinicians", "admin_assign", "Pair clinicians with patients to streamline communication."),
+            ("My Profile", "admin_profile", "Maintain your administrator account details."),
+        ]
+        if st.session_state.page is None:
+            _show_main_menu(menu_items, "Admin Console")
+            return
         else:
-            st.session_state[nav_state_key] = page_selection
+            menu_placeholder.empty()
 
-        placeholder = st.session_state.page_placeholder
-        placeholder.empty()
-        with st.session_state.page_placeholder.container():
-            if st.session_state.page == "User Management & Export":
-                _render_admin_page(service, hospital_id)
-            elif st.session_state.page == "Assign Clinicians":
-                _render_assign_clinicians_page(service, hospital_id)
-            elif st.session_state.page == "My Profile":
-                _render_profile_page(service, hospital_id)
+        if st.session_state.page == "admin_users":
+            _show_back_button()
+            _render_admin_page(service, hospital_id)
+        elif st.session_state.page == "admin_assign":
+            _show_back_button()
+            _render_assign_clinicians_page(service, hospital_id)
+        elif st.session_state.page == "admin_profile":
+            _show_back_button()
+            _render_profile_page(service, hospital_id)
+        else:
+            st.session_state.page = None
+            st.rerun()
 
 def _render_profile_page(service, hospital_id):
     st.markdown("<h2 style='text-align: center;'>My Profile</h2>", unsafe_allow_html=True)
@@ -346,6 +362,23 @@ def _render_profile_page(service, hospital_id):
                     st.success("Profile updated successfully!")
                 else:
                     st.error("Failed to update profile.")
+
+    st.divider()
+    st.error("Danger Zone")
+    st.write("Deleting your account will permanently remove your access and associated data permitted for your role.")
+    confirm_delete = st.checkbox("I understand this action cannot be undone.", key="confirm_delete_account")
+    delete_disabled = not confirm_delete
+    if st.button("Delete My Account", type="secondary", disabled=delete_disabled):
+        with st.spinner("Deleting account..."):
+            if service.delete_user(hospital_id, user.username, user.role):
+                st.success("Your account has been deleted.")
+                service.logout()
+                st.session_state.current_user = None
+                st.session_state.hospital_id = None
+                st.session_state.auth_page = 'welcome'
+                st.rerun()
+            else:
+                st.error("Unable to delete your account. Please contact an administrator.")
 
 def _display_user_profile_details(user_data):
     """Renders a read-only view of a user's profile details."""
@@ -394,6 +427,11 @@ def _render_patient_chat_page(service, hospital_id):
     with care_tab:
         st.subheader("Care Team Channel")
         messages = chat_service.get_general_messages(hospital_id, user.username)
+        clear_general = st.button("Clear Care Team Messages", key="patient_clear_general")
+        if clear_general:
+            chat_service.clear_general_messages(hospital_id, user.username)
+            st.success("Care team messages cleared.")
+            _rerun()
         _render_chat_messages(service, hospital_id, messages)
 
         with st.form("patient_general_chat_form", clear_on_submit=True):
@@ -438,6 +476,11 @@ def _render_patient_chat_page(service, hospital_id):
 
             if selected_clinician:
                 messages = chat_service.get_direct_messages(hospital_id, user.username, selected_clinician)
+                clear_direct = st.button("Clear Direct Messages", key=f"patient_clear_direct_{selected_clinician}")
+                if clear_direct:
+                    chat_service.clear_direct_messages(hospital_id, user.username, selected_clinician)
+                    st.success("Direct conversation cleared.")
+                    _rerun()
                 _render_chat_messages(service, hospital_id, messages)
 
                 prompt_name = clinician_map.get(selected_clinician, selected_clinician)
@@ -464,7 +507,7 @@ def _render_patient_chat_page(service, hospital_id):
                         )
                         _rerun()
 
-    _schedule_auto_refresh(f"patient_chat_refresh_{user.username}", expected_page="Messaging")
+    _schedule_auto_refresh(f"patient_chat_refresh_{user.username}", expected_page="patient_messaging")
 
 def _render_clinician_chat_page(service, hospital_id):
     st.markdown("<h2 style='text-align: center;'>Patient Messaging</h2>", unsafe_allow_html=True)
@@ -500,6 +543,11 @@ def _render_clinician_chat_page(service, hospital_id):
     with care_tab:
         st.subheader("Care Team Channel")
         messages = chat_service.get_general_messages(hospital_id, selected_patient)
+        clear_general = st.button("Clear Care Team Messages", key=f"clinician_clear_general_{selected_patient}")
+        if clear_general:
+            chat_service.clear_general_messages(hospital_id, selected_patient)
+            st.success("Care team messages cleared.")
+            _rerun()
         _render_chat_messages(service, hospital_id, messages)
 
         form_key = f"clinician_general_chat_form_{selected_patient}"
@@ -528,6 +576,11 @@ def _render_clinician_chat_page(service, hospital_id):
     with direct_tab:
         st.subheader("Direct Message With Patient")
         messages = chat_service.get_direct_messages(hospital_id, selected_patient, user.username)
+        clear_direct = st.button("Clear Direct Messages", key=f"clinician_clear_direct_{selected_patient}")
+        if clear_direct:
+            chat_service.clear_direct_messages(hospital_id, selected_patient, user.username)
+            st.success("Direct conversation cleared.")
+            _rerun()
         _render_chat_messages(service, hospital_id, messages)
 
         form_key = f"clinician_direct_chat_form_{selected_patient}"
@@ -558,7 +611,7 @@ def _render_clinician_chat_page(service, hospital_id):
                     st.warning("You can only send direct messages to patients assigned to you.")
 
     refresh_key = f"clinician_chat_refresh_{user.username}_{selected_patient}"
-    _schedule_auto_refresh(refresh_key, expected_page="Patient Messaging")
+    _schedule_auto_refresh(refresh_key, expected_page="clinician_messaging")
 
 def _render_add_note_page(service, hospital_id):
     st.markdown("<h2 style='text-align: center;'>Add a New Patient Note</h2>", unsafe_allow_html=True)
@@ -575,6 +628,8 @@ def _render_add_note_page(service, hospital_id):
         appetite = st.slider("Appetite (0-10)", 0, 10, 5)
         notes = st.text_area("Narrative Notes (patient stories, cultural needs, etc.)")
         diagnoses = st.text_area("Medical Notes and Diagnoses")
+        share_with_patient = st.checkbox("Share this note with the patient", value=True,
+                                         help="Uncheck to keep this note visible only to clinicians assigned to the patient.")
         submitted = st.form_submit_button("Save Note")
         if submitted:
             with st.spinner("Saving note..."):
@@ -582,7 +637,8 @@ def _render_add_note_page(service, hospital_id):
                 author_id = st.session_state.current_user.username
                 note = PatientNote(
                     patient_id=selected_patient, author_id=author_id, mood=mood, pain=pain,
-                    appetite=appetite, notes=notes, diagnoses=diagnoses, source="clinician", hospital_id=hospital_id
+                    appetite=appetite, notes=notes, diagnoses=diagnoses, source="clinician", hospital_id=hospital_id,
+                    hidden_from_patient=not share_with_patient
                 )
                 service.add_note(note, hospital_id)
                 st.success(f"Note added successfully for patient '{selected_patient}'.")
@@ -670,6 +726,7 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
             author = note.get('author_id', 'Unknown')
 
             privacy_icon = "🔒" if note.get('is_private') else ""
+            hidden_from_patient = note.get('hidden_from_patient', False)
 
             if source == "patient":
                 expander_title = f"Patient Entry from {timestamp} {privacy_icon}"
@@ -679,7 +736,10 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                     st.write("This note is private and cannot be viewed.")
                     continue
             else:
-                expander_title = f"Clinical Note from {timestamp} (by {author})"
+                if hidden_from_patient and user.role == 'patient':
+                    continue
+                hidden_suffix = " [Clinicians Only]" if hidden_from_patient else ""
+                expander_title = f"Clinical Note from {timestamp} (by {author}){hidden_suffix}"
                 st.warning(f"Note from Clinician: {author}")
             
             with st.expander(expander_title):
@@ -692,6 +752,8 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                 if source == "clinician":
                     st.write("**Diagnoses/Medical Notes:**")
                     st.write(note.get('diagnoses') or "_No diagnoses provided._")
+                    if hidden_from_patient:
+                        st.info("This note is hidden from the patient and is only visible to assigned clinicians.")
                 
                 ai_feedback = note.get('ai_feedback')
                 if ai_feedback:
@@ -742,12 +804,22 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                         st.subheader("Edit Note")
                         edited_notes = st.text_area("Notes", value=note.get('notes', ''))
                         edited_diagnoses = st.text_area("Diagnoses", value=note.get('diagnoses', '')) if source == "clinician" else None
+                        share_checkbox = None
+                        if source == "clinician":
+                            share_checkbox = st.checkbox(
+                                "Share with patient",
+                                value=not hidden_from_patient,
+                                help="Uncheck to keep this note visible only to clinicians assigned to the patient."
+                            )
                         
                         save_changes = st.form_submit_button("Save Changes")
                         if save_changes:
                             updated_data = {'notes': edited_notes}
                             if edited_diagnoses is not None:
                                 updated_data['diagnoses'] = edited_diagnoses
+                                updated_data['hidden_from_patient'] = not share_checkbox
+                            elif source == "clinician" and share_checkbox is not None:
+                                updated_data['hidden_from_patient'] = not share_checkbox
                             service.update_note(hospital_id, note.get('note_id'), updated_data)
                             st.session_state.editing_note_id = None
                             st.success("Note updated.")
