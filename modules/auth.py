@@ -202,6 +202,32 @@ class CareLogService:
                         return True
         return False
 
+    def delete_user(self, hospital_id, username, role):
+        user_key = f"{username}_{role}"
+        hospital_users = self._data['hospitals'].get(hospital_id, {}).get('users', {})
+        if user_key in hospital_users:
+            # Prevent an admin from deleting their own account
+            if self.current_user and self.current_user.username == username and self.current_user.role == role:
+                return False
+
+            del hospital_users[user_key]
+
+            # If a patient is deleted, remove their notes for data privacy and integrity.
+            if role == 'patient':
+                notes = self._data['hospitals'].get(hospital_id, {}).get('notes', [])
+                self._data['hospitals'][hospital_id]['notes'] = [n for n in notes if n.get('patient_id') != username]
+            
+            # If a clinician is deleted, remove them from any patient's assigned list.
+            if role == 'clinician':
+                for u_data in hospital_users.values():
+                    if u_data.get('role') == 'patient' and 'assigned_clinicians' in u_data:
+                        if username in u_data['assigned_clinicians']:
+                            u_data['assigned_clinicians'].remove(username)
+
+            self._save_data()
+            return True
+        return False
+
     def delete_note(self, note_id, hospital_id):
         if hospital_id in self._data['hospitals']:
             self._data['hospitals'][hospital_id]['notes'] = [n for n in self._data['hospitals'][hospital_id]['notes'] if n['note_id'] != note_id]
@@ -228,6 +254,11 @@ class CareLogService:
     def get_all_users(self, hospital_id):
         return self._data['hospitals'].get(hospital_id, {}).get('users', {})
         
+    def get_user_by_username(self, hospital_id, username, role):
+        """Retrieves a single user's data by username and role."""
+        user_key = f"{username}_{role}"
+        return self._data['hospitals'].get(hospital_id, {}).get('users', {}).get(user_key, {})
+
     def get_hospital_dataset(self, hospital_id):
         return self._data['hospitals'].get(hospital_id, {"users": {}, "notes": []})
 

@@ -48,7 +48,7 @@ def show_login_form(service):
                     st.error("Hospital ID, Username, and Password are required.")
                 else:
                     with st.spinner("Logging in..."):
-                        time.sleep(0.5)
+                        time.sleep(1)
                         user = service.login(username, password, role, hospital_id)
                         if user == 'pending':
                             st.warning("Your account creation is successful but pending approval by an administrator.")
@@ -86,7 +86,7 @@ def show_register_form(service):
                     st.error("All fields are required.")
                 else:
                     with st.spinner("Registering..."):
-                        time.sleep(0.5)
+                        time.sleep(1)
                         result = service.register_user(username, password, role, hospital_id, full_name, dob.isoformat(), sex, pronouns, bio)
                         if result == 'pending':
                             st.info("Your account registration is successful but pending approval by an administrator.")
@@ -110,7 +110,7 @@ def show_main_app(service):
     
     if st.sidebar.button("Logout"):
         with st.spinner("Logging out..."):
-            time.sleep(0.5)
+            time.sleep(1)
             service.logout()
             st.session_state.current_user = None
             st.session_state.hospital_id = None
@@ -139,7 +139,7 @@ def show_main_app(service):
                 st.sidebar.error(f"**{alert.get('patient_id')}** at {timestamp}")
             if st.sidebar.button("Manage Alerts"):
                 with st.spinner("Loading..."):
-                    time.sleep(0.5)
+                    time.sleep(1)
                     st.session_state.page = "Pain Alerts"
                     st.rerun()
             st.sidebar.divider()
@@ -236,11 +236,26 @@ def _render_profile_page(service, hospital_id):
                 "pronouns": pronouns, "bio": bio, "new_password": new_password
             }
             with st.spinner("Updating profile..."):
-                time.sleep(0.5)
+                time.sleep(1)
                 if service.update_user_profile(hospital_id, user.username, user.role, update_details):
                     st.success("Profile updated successfully!")
                 else:
                     st.error("Failed to update profile.")
+
+def _display_user_profile_details(user_data):
+    """Renders a read-only view of a user's profile details."""
+    st.write(f"**Username:** {user_data.get('username', 'N/A')}")
+    st.write(f"**Role:** {user_data.get('role', 'N/A').capitalize()}")
+    st.write(f"**Full Name:** {user_data.get('full_name', 'N/A')}")
+    
+    dob_val = user_data.get('dob')
+    dob_display = datetime.date.fromisoformat(dob_val).strftime('%B %d, %Y') if dob_val else "N/A"
+    st.write(f"**Date of Birth:** {dob_display}")
+    
+    st.write(f"**Sex:** {user_data.get('sex', 'N/A')}")
+    st.write(f"**Pronouns:** {user_data.get('pronouns', 'N/A')}")
+    st.write(f"**Bio:**")
+    st.info(user_data.get('bio') or "_No bio provided._")
 
 def _render_add_note_page(service, hospital_id):
     st.markdown("<h2 style='text-align: center;'>Add a New Patient Note</h2>", unsafe_allow_html=True)
@@ -260,7 +275,7 @@ def _render_add_note_page(service, hospital_id):
         submitted = st.form_submit_button("Save Note")
         if submitted:
             with st.spinner("Saving note..."):
-                time.sleep(0.5)
+                time.sleep(1)
                 author_id = st.session_state.current_user.username
                 note = PatientNote(
                     patient_id=selected_patient, author_id=author_id, mood=mood, pain=pain,
@@ -277,24 +292,26 @@ def _render_add_patient_entry_page(service, hospital_id):
         st.success("Your entry has been saved successfully.")
         del st.session_state['entry_saved_success'] # Clear the flag
 
-    with st.form("add_patient_entry_form"):
+    form = st.form("add_patient_entry_form")
+    with form:
         mood = st.slider("My Mood (0-10)", 0, 10, 5)
         pain = st.slider("My Pain Level (0-10)", 0, 10, 5)
         appetite = st.slider("My Appetite (0-10)", 0, 10, 5)
         notes = st.text_area("How are you feeling today?")
         is_private = st.checkbox("Make this entry private (only you can see it)", value=False)
         submitted = st.form_submit_button("Save Entry")
-        if submitted:
-            with st.spinner("Saving entry..."):
-                time.sleep(0.5)
-                user = st.session_state.current_user
-                note = PatientNote(
-                    patient_id=user.username, author_id=user.username, mood=mood, pain=pain,
-                    appetite=appetite, notes=notes, diagnoses="", source="patient", hospital_id=hospital_id, is_private=is_private
-                )
-                service.add_note(note, hospital_id)
-                st.session_state.entry_saved_success = True
-                st.rerun()
+
+    if submitted:
+        with st.spinner("Saving entry..."):
+            time.sleep(1)
+            user = st.session_state.current_user
+            note = PatientNote(
+                patient_id=user.username, author_id=user.username, mood=mood, pain=pain,
+                appetite=appetite, notes=notes, diagnoses="", source="patient", hospital_id=hospital_id, is_private=is_private
+            )
+            service.add_note(note, hospital_id)
+            st.session_state.entry_saved_success = True
+            st.rerun()
 
 def _render_view_notes_page(service, hospital_id, patient_id=None):
     user = st.session_state.current_user
@@ -311,6 +328,15 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
         selected_patient = st.selectbox("Select a patient to view their notes", patient_usernames)
         
         # Add search functionality for clinicians
+        if user.role == 'clinician' and selected_patient:
+            if st.button("View Patient Profile"):
+                # Use session state to toggle profile visibility
+                st.session_state.viewing_patient_profile = not st.session_state.get('viewing_patient_profile', False)
+            
+            if st.session_state.get('viewing_patient_profile'):
+                patient_data = service.get_user_by_username(hospital_id, selected_patient, 'patient')
+                _display_user_profile_details(patient_data)
+
         if user.role == 'clinician':
             search_term = st.text_input("Search notes for this patient:")
             if search_term:
@@ -422,23 +448,107 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                         st.success("Note deleted successfully.")
                         st.rerun()
 
+def _render_user_management_entry(user_key, user_data, service, hospital_id):
+    """Renders a single user entry in the admin management panel."""
+    _display_user_profile_details(user_data)
+    
+    st.divider()
+    c1, c2 = st.columns(2)
+    # Edit User Button
+    with c1:
+        if st.button("Edit User", key=f"edit_{user_key}"):
+            st.session_state.editing_user_key = user_key
+    # Delete User Button
+    with c2:
+        current_admin_user = st.session_state.current_user
+        # Prevent admin from deleting themselves
+        is_self = (current_admin_user.username == user_data.get('username') and current_admin_user.role == user_data.get('role'))
+        if st.button("Delete User", key=f"delete_{user_key}", disabled=is_self, type="secondary"):
+            if service.delete_user(hospital_id, user_data.get('username'), user_data.get('role')):
+                st.success(f"User {user_data.get('username')} deleted successfully.")
+                st.rerun()
+            else:
+                st.error("Failed to delete user.")
+
+    # If this user is being edited, show the edit form
+    if st.session_state.get('editing_user_key') == user_key:
+        with st.form(key=f"edit_form_{user_key}"):
+            st.subheader(f"Editing {user_data.get('username')}")
+            full_name = st.text_input("Full Name", value=user_data.get('full_name', ''))
+            dob_val = user_data.get('dob')
+            dob = st.date_input("Date of Birth", value=datetime.date.fromisoformat(dob_val) if dob_val else None, min_value=datetime.date(1900, 1, 1))
+            sex_options = ["Male", "Female", "Intersex", "Prefer not to say"]
+            sex = st.selectbox("Sex", options=sex_options, index=sex_options.index(user_data.get('sex')) if user_data.get('sex') in sex_options else 0)
+            pronouns = st.text_input("Pronouns", value=user_data.get('pronouns', ''))
+            bio = st.text_area("Bio", value=user_data.get('bio', ''))
+            
+            save_changes = st.form_submit_button("Save Changes")
+            if save_changes:
+                update_details = {
+                    "full_name": full_name, "dob": dob.isoformat() if dob else None, "sex": sex,
+                    "pronouns": pronouns, "bio": bio
+                }
+                if service.update_user_profile(hospital_id, user_data.get('username'), user_data.get('role'), update_details):
+                    st.success("Profile updated successfully!")
+                    st.session_state.editing_user_key = None
+                    st.rerun()
+                else:
+                    st.error("Failed to update profile.")
+
 def _render_admin_page(service, hospital_id):
     st.markdown(f"<h2 style='text-align: center;'>Admin Panel for {hospital_id}</h2>", unsafe_allow_html=True)
     st.subheader("User Management")
     users_dict = service.get_all_users(hospital_id)
+
     if not users_dict:
         st.info("No users found for this hospital.")
     else:
-        user_data_list = [
-            # Use .get() for robustness in case 'username', 'role', or 'status' keys are missing
-            {"Username": user_data.get('username'), "Role": user_data.get('role'), "Status": user_data.get('status', 'approved')}
-            for user_data in users_dict.values()
-        ]
-        df = pd.DataFrame(user_data_list)
-        df.index = pd.RangeIndex(start=1, stop=len(df) + 1, step=1)
-        st.dataframe(df, width=None, use_container_width=True)
+        active_users = {k: v for k, v in users_dict.items() if v.get('status') == 'approved'}
+        pending_users = {k: v for k, v in users_dict.items() if v.get('status') == 'pending'}
+
+        st.markdown("##### Active Accounts")
+        for user_key, user_data in sorted(active_users.items()):
+            with st.expander(f"**{user_data.get('username')}** ({user_data.get('role', '').capitalize()})"):
+                _render_user_management_entry(user_key, user_data, service, hospital_id)
+
     
+        st.markdown("##### Awaiting Approval")
+        for user_key, user_data in sorted(pending_users.items()):
+            with st.expander(f"**{user_data.get('username')}** ({user_data.get('role', '').capitalize()})"):
+                _render_user_management_entry(user_key, user_data, service, hospital_id)
+
     st.divider()
+    
+    # --- Create New User Form for Admins ---
+    st.markdown("##### Create a New User")
+    with st.expander("Create a New User"):
+        with st.form("create_user_form"):
+            st.subheader("New User Details")
+            new_full_name = st.text_input("Full Name")
+            new_role = st.selectbox("Role", ["patient", "clinician", "admin"])
+            new_username = st.text_input("Username")
+            new_password = st.text_input("Password", type="password")
+            
+            st.markdown("---")
+            new_dob = st.date_input("Date of Birth", min_value=datetime.date(1900, 1, 1), key="new_dob")
+            new_sex = st.selectbox("Sex", ["Male", "Female", "Intersex", "Prefer not to say"], key="new_sex")
+            new_pronouns = st.text_input("Pronouns (e.g., she/her, they/them)", key="new_pronouns")
+            new_bio = st.text_area("Bio (Optional)", key="new_bio")
+
+            create_submitted = st.form_submit_button("Create User")
+            if create_submitted:
+                if not new_username or not new_password or not new_full_name:
+                    st.error("Full Name, Username, and Password are required.")
+                else:
+                    result = service.register_user(new_username, new_password, new_role, hospital_id, new_full_name, new_dob.isoformat(), new_sex, new_pronouns, new_bio)
+                    if result is True or result == 'pending': # Admin-created users might still be pending if they are clinicians/admins
+                        st.success(f"User '{new_username}' created successfully!")
+                        st.rerun()
+                    else:
+                        st.error(f"A profile for username '{new_username}' with the role '{new_role}' may already exist.")
+
+    st.divider()
+
     st.header("Data Export")
     st.warning(f"The following exports contain data for **{hospital_id} ONLY**.")
     hospital_data = service.get_hospital_dataset(hospital_id)
@@ -455,13 +565,23 @@ def _render_admin_page(service, hospital_id):
     col1, col2 = st.columns(2)
     with col1:
         users_dict_export = hospital_data.get('users', {})
-        if users_dict_export:
-            display_users = [
-                {'username': u_data['username'], 'role': u_data['role']}
-                # Use .get() for robustness in case 'username' or 'role' keys are missing
-                for u_data in users_dict_export.values()
-            ]
-            users_df = pd.DataFrame(display_users)
+        if users_dict_export:            
+            # Prepare user data for export, excluding sensitive fields
+            export_users_data = []
+            for user_key, u_data in users_dict_export.items():
+                user_export_data = {
+                    'username': u_data.get('username'),
+                    'role': u_data.get('role'),
+                    'status': u_data.get('status'),
+                    'full_name': u_data.get('full_name'),
+                    'dob': u_data.get('dob'),
+                    'sex': u_data.get('sex'),
+                    'pronouns': u_data.get('pronouns'),
+                    'bio': u_data.get('bio'),
+                    'assigned_clinicians': ', '.join(u_data.get('assigned_clinicians', [])) if u_data.get('role') == 'patient' else ''
+                }
+                export_users_data.append(user_export_data)
+            users_df = pd.DataFrame(export_users_data)
             st.download_button(
                 "Download Users (CSV)", users_df.to_csv(index=False).encode('utf-8'),
                 f"carelog_{hospital_id}_users_{datetime.date.today()}.csv", "text/csv"
