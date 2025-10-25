@@ -183,7 +183,7 @@ def show_main_app(service):
             _render_profile_page(service, hospital_id)
 
     elif user.role == 'admin':
-        pages = ["User Management & Export", "Approve New Users", "Assign Clinicians", "My Profile"]
+        pages = ["User Management & Export", "Assign Clinicians", "My Profile"]
         if st.session_state.page not in pages: st.session_state.page = "User Management & Export"
         page_selection = st.sidebar.radio("Navigation", pages, index=pages.index(st.session_state.page))
         if page_selection != st.session_state.page:
@@ -194,8 +194,6 @@ def show_main_app(service):
         # Page rendering
         if st.session_state.page == "User Management & Export":
             _render_admin_page(service, hospital_id)
-        elif st.session_state.page == "Approve New Users":
-            _render_approval_page(service, hospital_id)
         elif st.session_state.page == "Assign Clinicians":
             _render_assign_clinicians_page(service, hospital_id)
         elif st.session_state.page == "My Profile":
@@ -327,16 +325,25 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
         patient_usernames = [p['username'] for p in patients]
         selected_patient = st.selectbox("Select a patient to view their notes", patient_usernames)
         
+        # Initialize or clear the viewing state if the patient selection changes
+        if st.session_state.get('viewing_profile_for_patient') and st.session_state.viewing_profile_for_patient != selected_patient:
+            st.session_state.viewing_profile_for_patient = None
+
         # Add search functionality for clinicians
         if user.role == 'clinician' and selected_patient:
-            if st.button("View Patient Profile"):
-                # Use session state to toggle profile visibility
-                st.session_state.viewing_patient_profile = not st.session_state.get('viewing_patient_profile', False)
-            
-            if st.session_state.get('viewing_patient_profile'):
+            # Toggle button for viewing/hiding patient profile
+            if st.session_state.get('viewing_profile_for_patient') != selected_patient:
+                if st.button("View Patient Profile", key="view_patient_profile_btn"):
+                    st.session_state.viewing_profile_for_patient = selected_patient
+                    st.rerun() # Rerun to show the profile immediately
+            else:
+                if st.button("Hide Patient Profile", key="hide_patient_profile_btn"):
+                    st.session_state.viewing_profile_for_patient = None
+                    st.rerun() # Rerun to hide the profile immediately
                 patient_data = service.get_user_by_username(hospital_id, selected_patient, 'patient')
                 _display_user_profile_details(patient_data)
-
+            
+            st.divider() # Add a divider for better separation
         if user.role == 'clinician':
             search_term = st.text_input("Search notes for this patient:")
             if search_term:
@@ -441,34 +448,36 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                             st.success("Note updated.")
                             st.rerun()
 
-                elif user.role == 'patient' and note.get('source') != 'patient': # Patient can delete clinician notes
-                    if st.button("Delete Note", key=f"delete_{note.get('note_id', 'unknown_id')}", disabled=True):
-                        # Use .get() for robustness when calling service.delete_note
-                        service.delete_note(note['note_id'], hospital_id)
-                        st.success("Note deleted successfully.")
-                        st.rerun()
-
 def _render_user_management_entry(user_key, user_data, service, hospital_id):
     """Renders a single user entry in the admin management panel."""
     _display_user_profile_details(user_data)
     
+    is_pending = user_data.get('status') == 'pending'
+    
     st.divider()
-    c1, c2 = st.columns(2)
-    # Edit User Button
-    with c1:
-        if st.button("Edit User", key=f"edit_{user_key}"):
-            st.session_state.editing_user_key = user_key
-    # Delete User Button
-    with c2:
-        current_admin_user = st.session_state.current_user
-        # Prevent admin from deleting themselves
-        is_self = (current_admin_user.username == user_data.get('username') and current_admin_user.role == user_data.get('role'))
-        if st.button("Delete User", key=f"delete_{user_key}", disabled=is_self, type="secondary"):
-            if service.delete_user(hospital_id, user_data.get('username'), user_data.get('role')):
-                st.success(f"User {user_data.get('username')} deleted successfully.")
-                st.rerun()
-            else:
-                st.error("Failed to delete user.")
+    
+    # Action buttons
+    num_cols = 3 if is_pending else 2
+    cols = st.columns(num_cols)
+    
+    if is_pending:
+        if cols[0].button("Approve User", key=f"approve_{user_key}", type="primary"):
+            service.approve_user(user_data.get('username'), user_data.get('role'), hospital_id)
+            st.success(f"User {user_data.get('username')} approved.")
+            st.rerun()
+
+    if cols[num_cols-2].button("Edit User", key=f"edit_{user_key}"):
+        st.session_state.editing_user_key = user_key
+        st.rerun()
+
+    current_admin_user = st.session_state.current_user
+    is_self = (current_admin_user.username == user_data.get('username') and current_admin_user.role == user_data.get('role'))
+    if cols[num_cols-1].button("Delete User", key=f"delete_{user_key}", disabled=is_self, type="secondary"):
+        if service.delete_user(hospital_id, user_data.get('username'), user_data.get('role')):
+            st.success(f"User {user_data.get('username')} deleted successfully.")
+            st.rerun()
+        else:
+            st.error("Failed to delete user.")
 
     # If this user is being edited, show the edit form
     if st.session_state.get('editing_user_key') == user_key:
@@ -497,7 +506,7 @@ def _render_user_management_entry(user_key, user_data, service, hospital_id):
 
 def _render_admin_page(service, hospital_id):
     st.markdown(f"<h2 style='text-align: center;'>Admin Panel for {hospital_id}</h2>", unsafe_allow_html=True)
-    st.subheader("User Management")
+    st.subheader("User Accounts")
     users_dict = service.get_all_users(hospital_id)
 
     if not users_dict:
@@ -506,16 +515,17 @@ def _render_admin_page(service, hospital_id):
         active_users = {k: v for k, v in users_dict.items() if v.get('status') == 'approved'}
         pending_users = {k: v for k, v in users_dict.items() if v.get('status') == 'pending'}
 
-        st.markdown("##### Active Accounts")
-        for user_key, user_data in sorted(active_users.items()):
-            with st.expander(f"**{user_data.get('username')}** ({user_data.get('role', '').capitalize()})"):
-                _render_user_management_entry(user_key, user_data, service, hospital_id)
+        if pending_users:
+            st.markdown("##### Awaiting Approval")
+            for user_key, user_data in sorted(pending_users.items()):
+                with st.expander(f"**{user_data.get('username')}** ({user_data.get('role', '').capitalize()}) - ⏳ Pending"):
+                    _render_user_management_entry(user_key, user_data, service, hospital_id)
 
-    
-        st.markdown("##### Awaiting Approval")
-        for user_key, user_data in sorted(pending_users.items()):
-            with st.expander(f"**{user_data.get('username')}** ({user_data.get('role', '').capitalize()})"):
-                _render_user_management_entry(user_key, user_data, service, hospital_id)
+        if active_users:
+            st.markdown("##### Active Accounts")
+            for user_key, user_data in sorted(active_users.items()):
+                with st.expander(f"**{user_data.get('username')}** ({user_data.get('role', '').capitalize()})"):
+                    _render_user_management_entry(user_key, user_data, service, hospital_id)
 
     st.divider()
     
@@ -635,37 +645,6 @@ def _render_admin_page(service, hospital_id):
             label="Download Notes Report (.txt)", data=final_report.encode('utf-8'),
             file_name=f"carelog_report_notes_{datetime.date.today()}.txt", mime="text/plain"
         )
-
-def _render_approval_page(service, hospital_id):
-    st.markdown("<h2 style='text-align: center;'>Approve New Users</h2>", unsafe_allow_html=True)
-    
-    st.subheader("Pending Administrators")
-    pending_admins = service.get_pending_users(hospital_id, 'admin')
-    if not pending_admins:
-        st.info("No new admin accounts are pending approval.")
-    else:
-        for admin in pending_admins:
-            st.text(f"Username: {admin['username']}")
-            # Use .get() for robustness in case 'username' key is missing
-            if st.button(f"Approve {admin.get('username')}", key=f"approve_admin_{admin.get('username', 'unknown_admin')}"):
-                service.approve_user(admin['username'], 'admin', hospital_id)
-                st.success(f"User {admin['username']} has been approved.")
-                st.rerun()
-
-    st.divider() 
-    
-    st.subheader("Pending Clinicians")
-    pending_clinicians = service.get_pending_users(hospital_id, 'clinician')
-    if not pending_clinicians:
-        st.info("No new clinician accounts are pending approval.")
-    else:
-        for clinician in pending_clinicians:
-            st.text(f"Username: {clinician['username']}")
-            # Use .get() for robustness in case 'username' key is missing
-            if st.button(f"Approve {clinician.get('username')}", key=f"approve_clinician_{clinician.get('username', 'unknown_clinician')}"):
-                service.approve_user(clinician['username'], 'clinician', hospital_id)
-                st.success(f"User {clinician['username']} has been approved.")
-                st.rerun()
 
 def _render_review_feedback_page(service, hospital_id):
     st.markdown("<h2 style='text-align: center;'>Review AI Feedback</h2>", unsafe_allow_html=True)

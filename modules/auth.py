@@ -146,20 +146,20 @@ class CareLogService:
 
     def get_notes_for_patient(self, hospital_id, patient_id):
         hospital_data = self._data['hospitals'].get(hospital_id, {})
-        notes = [n for n in hospital_data.get('notes', []) if n.get('patient_id') == patient_id]
+        all_patient_notes = [n for n in hospital_data.get('notes', []) if n.get('patient_id') == patient_id]
         
-        # Filter for privacy if the current user is a clinician
+        # If the current user is a clinician, apply access control
         if self.current_user and self.current_user.role == 'clinician':
-            # Check if clinician is assigned to this patient
             patient_user_key = f"{patient_id}_patient"
             patient_data = hospital_data.get('users', {}).get(patient_user_key, {})
             assigned_clinicians = patient_data.get('assigned_clinicians', [])
 
             if self.current_user.username in assigned_clinicians:
                 # Clinician is assigned, filter out private notes from patient
-                return [n for n in notes if not (n.get('source') == 'patient' and n.get('is_private'))]
-            return [] # Clinician not assigned, return no notes
-        return notes # Patient or admin can see all their notes
+                # Only show notes that are not private patient notes
+                return [n for n in all_patient_notes if not (n.get('source') == 'patient' and n.get('is_private'))]
+            return [] # Clinician not assigned or not assigned to this patient, return no notes
+        return all_patient_notes # Patient or admin can see all their notes
 
     def get_pending_feedback(self, hospital_id):
         pending_feedback = []
@@ -217,12 +217,16 @@ class CareLogService:
                 notes = self._data['hospitals'].get(hospital_id, {}).get('notes', [])
                 self._data['hospitals'][hospital_id]['notes'] = [n for n in notes if n.get('patient_id') != username]
             
-            # If a clinician is deleted, remove them from any patient's assigned list.
+            # If a clinician is deleted, remove them from any patient's assigned list AND remove their authored notes.
             if role == 'clinician':
+                # Remove from assignment lists
                 for u_data in hospital_users.values():
                     if u_data.get('role') == 'patient' and 'assigned_clinicians' in u_data:
                         if username in u_data['assigned_clinicians']:
                             u_data['assigned_clinicians'].remove(username)
+                # Remove authored notes
+                notes = self._data['hospitals'].get(hospital_id, {}).get('notes', [])
+                self._data['hospitals'][hospital_id]['notes'] = [n for n in notes if n.get('author_id') != username or n.get('source') != 'clinician']
 
             self._save_data()
             return True
