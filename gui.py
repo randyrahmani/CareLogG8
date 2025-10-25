@@ -1,3 +1,13 @@
+"""
+This module defines the graphical user interface (GUI) for the CareLog application using Streamlit.
+
+It includes functions for rendering all UI components, such as authentication pages (login, register),
+role-specific dashboards (patient, clinician, admin), and various features like patient note management,
+secure messaging, and administrative tasks.
+
+The main entry point for the UI is `show_main_app`, which routes the user to the appropriate
+view based on their authentication status and role.
+"""
 # carelog/gui.py
 
 import streamlit as st
@@ -7,15 +17,22 @@ import datetime
 import time
 import pandas as pd
 
+# Attempt to import streamlit_autorefresh for automatic page refreshing.
+# If unavailable, fall back to a manual refresh mechanism.
 try:
     from streamlit_autorefresh import st_autorefresh as _st_autorefresh
 except ImportError:
     _st_autorefresh = getattr(st, "autorefresh", None)
 
+# Constants
 CHAT_REFRESH_INTERVAL_SECONDS = 3.0
 
 def _rerun():
-    """Triggers a rerun via the available Streamlit API."""
+    """Triggers a rerun of the Streamlit app to refresh the UI.
+
+    This function attempts to use the modern `st.rerun()` if available,
+    falling back to the older `st.experimental_rerun()` for compatibility.
+    """
     rerun_callable = getattr(st, "experimental_rerun", None)
     if callable(rerun_callable):
         rerun_callable()
@@ -23,21 +40,43 @@ def _rerun():
         st.rerun()
 
 def _format_timestamp(timestamp_str):
-    """Converts an ISO string into a human-readable local timestamp."""
+    """Converts an ISO 8601 timestamp string into a human-readable local time format.
+
+    Args:
+        timestamp_str (str): The ISO-formatted timestamp string.
+
+    Returns:
+        str: A formatted string (e.g., "Jan 01, 2023 • 14:30") or the original
+             string if conversion fails.
+    """
     if not timestamp_str:
         return "Unknown time"
     try:
+        # Ensure the 'Z' is replaced with a UTC offset for consistent parsing.
         clean_value = timestamp_str.replace('Z', '+00:00')
         timestamp = datetime.datetime.fromisoformat(clean_value)
+        # If no timezone is present, assume UTC.
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=datetime.timezone.utc)
+        # Convert to the user's local timezone.
         local_timestamp = timestamp.astimezone()
         return local_timestamp.strftime("%b %d, %Y • %H:%M")
     except ValueError:
         return timestamp_str
 
 def _get_display_name(service, hospital_id, username, role, cache):
-    """Looks up a human-readable name for chat participants."""
+    """Retrieves the full name of a user for display, using a cache to minimize lookups.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+        username (str): The user's username.
+        role (str): The user's role.
+        cache (dict): A dictionary used for caching display names.
+
+    Returns:
+        str: The user's full name, or their username if the full name is not available.
+    """
     cache_key = (username, role)
     if cache_key in cache:
         return cache[cache_key]
@@ -49,7 +88,13 @@ def _get_display_name(service, hospital_id, username, role, cache):
     return display_name
 
 def _render_chat_messages(service, hospital_id, messages):
-    """Displays chat history using Streamlit's chat layout."""
+    """Displays a list of chat messages in a scrollable container.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+        messages (list): A list of message dictionaries to display.
+    """
     if not messages:
         st.info("No messages yet. Start the conversation below.")
         return
@@ -57,6 +102,7 @@ def _render_chat_messages(service, hospital_id, messages):
     name_cache = {}
     chat_container = st.container()
     with chat_container:
+        # Custom CSS to create a scrollable chat history.
         st.markdown(
             """
             <style>
@@ -76,6 +122,7 @@ def _render_chat_messages(service, hospital_id, messages):
             """,
             unsafe_allow_html=True
         )
+        # Render each message in a chat bubble.
         chat_wrapper = st.markdown('<div data-testid="chat-history-wrapper">', unsafe_allow_html=True)
         for message in messages:
             sender = message.get('sender')
@@ -92,31 +139,37 @@ def _render_chat_messages(service, hospital_id, messages):
                 st.caption(timestamp_display)
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- Page navigation helpers ---
+# Page navigation helpers
 def set_page_welcome():
+    """Sets the session state to display the welcome page."""
     st.session_state.auth_page = 'welcome'
 
 def set_page_login():
+    """Sets the session state to display the login page."""
     st.session_state.auth_page = 'login'
 
 def set_page_register():
+    """Sets the session state to display the registration page."""
     st.session_state.auth_page = 'register'
 
-# --- Authentication Pages ---
-
+# Authentication Pages
 def show_welcome_page():
-    """Displays a welcome screen with buttons to navigate."""
+    """Displays the main welcome screen with login and registration options."""
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<h1 style='text-align: center;'>Welcome to CareLog </h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center;'>A multi-hospital platform for patient care.</p>", unsafe_allow_html=True)
         st.info("To begin, please select an option below. You will be asked for your hospital's unique ID.")
         
-        st.button("Login to an Existing Account", on_click=set_page_login, width='stretch', type="primary")
-        st.button("Create a New Account", on_click=set_page_register, width='stretch')
+        st.button("Login to an Existing Account", on_click=set_page_login, use_container_width=True, type="primary")
+        st.button("Create a New Account", on_click=set_page_register, use_container_width=True)
 
 def show_login_form(service):
-    """Displays the login form, requiring a role selection."""
+    """Displays the login form and handles user authentication.
+
+    Args:
+        service: The main application service instance.
+    """
     st.button("← Back to Welcome", on_click=set_page_welcome)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -126,18 +179,19 @@ def show_login_form(service):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
             role = st.selectbox("Login as", ["patient", "clinician", "admin"])
-            submitted = st.form_submit_button("Login", width='stretch')
+            submitted = st.form_submit_button("Login", use_container_width=True)
 
             if submitted:
                 if not hospital_id or not username or not password:
                     st.error("Hospital ID, Username, and Password are required.")
                 else:
                     with st.spinner("Logging in..."):
-                        time.sleep(1)
+                        time.sleep(1) # Simulate network latency
                         user = service.login(username, password, role, hospital_id)
                         if user == 'pending':
                             st.warning("Your account creation is successful but is pending approval by an administrator.")
                         elif user:
+                            # On successful login, store user info in session and rerun.
                             st.session_state.current_user = user
                             st.session_state.hospital_id = hospital_id
                             st.session_state.auth_page = 'welcome'
@@ -146,7 +200,11 @@ def show_login_form(service):
                             st.error("Invalid credentials for the selected role.")
                     
 def show_register_form(service):
-    """Displays the registration form."""
+    """Displays the user registration form and handles new account creation.
+
+    Args:
+        service: The main application service instance.
+    """
     st.button("← Back to Welcome", on_click=set_page_welcome)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -168,14 +226,14 @@ def show_register_form(service):
             pronouns = st.text_input("Pronouns (e.g., she/her, they/them)")
             bio = st.text_area("Bio (Optional)")
 
-            submitted = st.form_submit_button("Register", width='stretch')
+            submitted = st.form_submit_button("Register", use_container_width=True)
 
             if submitted:
                 if not hospital_id or not username or not password or not full_name:
                     st.error("All fields are required.")
                 else:
                     with st.spinner("Registering..."):
-                        time.sleep(1)
+                        time.sleep(1) # Simulate processing time
                         result = service.register_user(username, password, role, hospital_id, full_name, dob.isoformat(), sex, pronouns, bio)
                         if result == 'weak_password':
                             st.error("Password must be at least 8 characters and include uppercase, lowercase, number, and symbol.")
@@ -188,18 +246,25 @@ def show_register_form(service):
                         else:
                             st.error(f"A profile for username {username} with the role {role} already exists at this hospital.")
 
-# --- Main Application UI ---
-
+# Main Application UI
 def show_main_app(service):
-    """Displays the main app UI after successful login."""
+    """
+    The main application router that displays the correct UI based on the user's role.
+
+    This function acts as the central hub after a user logs in, directing them
+    to the appropriate dashboard (Clinician, Patient, or Admin).
+
+    Args:
+        service: The main application service instance.
+    """
     user = st.session_state.current_user
     hospital_id = st.session_state.hospital_id
 
-    # Page router
+    # Initialize the page state if it doesn't exist.
     if 'page' not in st.session_state:
         st.session_state.page = None
 
-    # Reset page state if role changes or on first load
+    # Reset page state if the user's role changes or on the first load.
     if 'current_role' not in st.session_state or st.session_state.current_role != user.role:
         st.session_state.page = None
         st.session_state.current_role = user.role
@@ -207,12 +272,22 @@ def show_main_app(service):
     menu_placeholder = st.empty()
 
     def _show_main_menu(options, title, banner_message=None):
+        """
+        Renders the main menu for a given user role.
+
+        Args:
+            options (list): A list of tuples, where each tuple contains the
+                            label, page key, and description for a menu item.
+            title (str): The title of the menu (e.g., "Clinician Dashboard").
+            banner_message (str, optional): A message to display as a warning banner.
+        """
         with menu_placeholder.container():
             if banner_message:
                 st.warning(banner_message)
             st.markdown(f"## {title} — {user.full_name or user.username}")
             st.caption(f"Hospital ID: {hospital_id}")
             st.divider()
+            # Custom styling for menu buttons.
             st.markdown(
                 """
                 <style>
@@ -228,6 +303,7 @@ def show_main_app(service):
                 """,
                 unsafe_allow_html=True
             )
+            # Create a button for each menu option.
             for idx, (label, value, description) in enumerate(options):
                 button_key = f"{user.role}_menu_btn_{idx}"
                 if st.button(label, key=button_key, use_container_width=True):
@@ -235,6 +311,7 @@ def show_main_app(service):
                     st.rerun()
                 st.caption(description)
                 st.divider()
+            # Logout button.
             if st.button("Log Out", key=f"{user.role}_logout_btn", use_container_width=True):
                 with st.spinner("Logging out..."):
                     time.sleep(1)
@@ -245,10 +322,12 @@ def show_main_app(service):
                     st.rerun()
 
     def _show_back_button():
+        """Renders a button to navigate back to the main menu."""
         if st.button("← Back to Main Menu"):
             st.session_state.page = None
             st.rerun()
 
+    # Role-based routing for the main application.
     if user.role == 'clinician':
         menu_items = [
             ("View Notes", "clinician_view_notes", "Browse patients' histories, search within notes, and review profiles."),
@@ -263,10 +342,10 @@ def show_main_app(service):
             banner = f"🚨 {len(alerts)} high-priority alerts awaiting review." if alerts else None
             _show_main_menu(menu_items, "Clinician Dashboard", banner_message=banner)
             return
-            return
         else:
             menu_placeholder.empty()
 
+        # Sub-page routing for the clinician dashboard.
         if st.session_state.page == "clinician_view_notes":
             _show_back_button()
             _render_view_notes_page(service, hospital_id)
@@ -302,6 +381,7 @@ def show_main_app(service):
         else:
             menu_placeholder.empty()
 
+        # Sub-page routing for the patient hub.
         if st.session_state.page == "patient_add_entry":
             _show_back_button()
             _render_add_patient_entry_page(service, hospital_id)
@@ -330,6 +410,7 @@ def show_main_app(service):
         else:
             menu_placeholder.empty()
 
+        # Sub-page routing for the admin console.
         if st.session_state.page == "admin_users":
             _show_back_button()
             _render_admin_page(service, hospital_id)
@@ -344,6 +425,12 @@ def show_main_app(service):
             st.rerun()
 
 def _render_profile_page(service, hospital_id):
+    """Renders the user profile page for viewing and editing personal details.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     st.markdown("<h2 style='text-align: center;'>My Profile</h2>", unsafe_allow_html=True)
     user = st.session_state.current_user
     user_data = service.get_all_users(hospital_id).get(f"{user.username}_{user.role}")
@@ -352,6 +439,7 @@ def _render_profile_page(service, hospital_id):
         st.error("Could not load user profile.")
         return
 
+    # Profile editing form.
     with st.form("profile_form"):
         st.write(f"**Username:** {user_data['username']}")
         st.write(f"**Role:** {user_data['role'].capitalize()}")
@@ -384,6 +472,7 @@ def _render_profile_page(service, hospital_id):
                 else:
                     st.error("Failed to update profile.")
 
+    # "Danger Zone" for account deletion.
     st.divider()
     st.error("Danger Zone")
     st.write("Deleting your account will permanently remove your access and associated data permitted for your role.")
@@ -402,7 +491,11 @@ def _render_profile_page(service, hospital_id):
                 st.error("Unable to delete your account. Please contact an administrator.")
 
 def _display_user_profile_details(user_data):
-    """Renders a read-only view of a user's profile details."""
+    """Renders a read-only view of a user's profile details.
+
+    Args:
+        user_data (dict): A dictionary containing the user's profile information.
+    """
     st.write(f"**Username:** {user_data.get('username', 'N/A')}")
     st.write(f"**Role:** {user_data.get('role', 'N/A').capitalize()}")
     st.write(f"**Full Name:** {user_data.get('full_name', 'N/A')}")
@@ -417,14 +510,21 @@ def _display_user_profile_details(user_data):
     st.info(user_data.get('bio') or "_No bio provided._")
 
 def _schedule_auto_refresh(key, interval_seconds=CHAT_REFRESH_INTERVAL_SECONDS, expected_page=None):
-    """Schedules a rerun to keep the chat feed fresh."""
+    """Schedules a periodic rerun of the app to keep chat feeds fresh.
+
+    Args:
+        key (str): A unique key for the autorefresh component.
+        interval_seconds (float): The refresh interval in seconds.
+        expected_page (str, optional): If provided, the refresh will only occur
+                                       if the session is on this page.
+    """
     interval_ms = int(interval_seconds * 1000)
     if _st_autorefresh:
         _st_autorefresh(interval=interval_ms, key=key)
         st.caption(f"Chat updates automatically every {int(interval_seconds)} seconds.")
         return
 
-    # Fallback if st_autorefresh is unavailable.
+    # Fallback mechanism if st_autorefresh is not available.
     st.caption(f"Chat updates automatically every {int(interval_seconds)} seconds.")
     if expected_page is not None and st.session_state.get('page') != expected_page:
         return
@@ -434,6 +534,12 @@ def _schedule_auto_refresh(key, interval_seconds=CHAT_REFRESH_INTERVAL_SECONDS, 
     _rerun()
 
 def _render_patient_chat_page(service, hospital_id):
+    """Renders the patient's secure messaging interface.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     st.markdown("<h2 style='text-align: center;'>Secure Messaging</h2>", unsafe_allow_html=True)
     chat_service = getattr(service, 'chat', None)
     if not chat_service:
@@ -445,6 +551,7 @@ def _render_patient_chat_page(service, hospital_id):
 
     care_tab, direct_tab = st.tabs(["Care Team Channel", "Direct Messages"])
 
+    # Care Team Channel tab
     with care_tab:
         st.subheader("Care Team Channel")
         messages = chat_service.get_general_messages(hospital_id, user.username)
@@ -455,6 +562,7 @@ def _render_patient_chat_page(service, hospital_id):
             _rerun()
         _render_chat_messages(service, hospital_id, messages)
 
+        # Form for sending a new message to the care team.
         with st.form("patient_general_chat_form", clear_on_submit=True):
             general_message = st.text_input(
                 "Message the care team",
@@ -475,6 +583,7 @@ def _render_patient_chat_page(service, hospital_id):
                 )
                 _rerun()
 
+    # Direct Messages tab
     with direct_tab:
         st.subheader("Direct Messages With Assigned Clinicians")
         assigned_clinicians = service.get_assigned_clinicians_for_patient(hospital_id, user.username)
@@ -482,6 +591,7 @@ def _render_patient_chat_page(service, hospital_id):
         if not assigned_clinicians:
             st.info("You don't have any clinicians assigned yet. Once assigned, you can chat with them here.")
         else:
+            # Create a map of usernames to full names for the selectbox.
             clinician_map = {}
             for clinician_username in assigned_clinicians:
                 clinician_data = service.get_user_by_username(hospital_id, clinician_username, 'clinician')
@@ -504,6 +614,7 @@ def _render_patient_chat_page(service, hospital_id):
                     _rerun()
                 _render_chat_messages(service, hospital_id, messages)
 
+                # Form for sending a new direct message.
                 prompt_name = clinician_map.get(selected_clinician, selected_clinician)
                 form_key = f"patient_direct_chat_form_{selected_clinician}"
                 input_key = f"patient_direct_message_{selected_clinician}"
@@ -531,6 +642,12 @@ def _render_patient_chat_page(service, hospital_id):
     _schedule_auto_refresh(f"patient_chat_refresh_{user.username}", expected_page="patient_messaging")
 
 def _render_clinician_chat_page(service, hospital_id):
+    """Renders the clinician's secure messaging interface.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     st.markdown("<h2 style='text-align: center;'>Patient Messaging</h2>", unsafe_allow_html=True)
     chat_service = getattr(service, 'chat', None)
     if not chat_service:
@@ -543,6 +660,7 @@ def _render_clinician_chat_page(service, hospital_id):
         st.info("No patients assigned to you yet.")
         return
 
+    # Create a map of patient usernames to full names for the selectbox.
     patient_map = {}
     for patient in patients:
         username = patient.get('username')
@@ -561,6 +679,7 @@ def _render_clinician_chat_page(service, hospital_id):
 
     care_tab, direct_tab = st.tabs(["Care Team Channel", "Direct Message"])
 
+    # Care Team Channel tab
     with care_tab:
         st.subheader("Care Team Channel")
         messages = chat_service.get_general_messages(hospital_id, selected_patient)
@@ -571,6 +690,7 @@ def _render_clinician_chat_page(service, hospital_id):
             _rerun()
         _render_chat_messages(service, hospital_id, messages)
 
+        # Form for sending a new message to the care team.
         form_key = f"clinician_general_chat_form_{selected_patient}"
         input_key = f"clinician_general_message_{selected_patient}"
         with st.form(form_key, clear_on_submit=True):
@@ -594,6 +714,7 @@ def _render_clinician_chat_page(service, hospital_id):
                 )
                 _rerun()
 
+    # Direct Message tab
     with direct_tab:
         st.subheader("Direct Message With Patient")
         messages = chat_service.get_direct_messages(hospital_id, selected_patient, user.username)
@@ -604,6 +725,7 @@ def _render_clinician_chat_page(service, hospital_id):
             _rerun()
         _render_chat_messages(service, hospital_id, messages)
 
+        # Form for sending a new direct message.
         form_key = f"clinician_direct_chat_form_{selected_patient}"
         input_key = f"clinician_direct_message_{selected_patient}"
         with st.form(form_key, clear_on_submit=True):
@@ -635,6 +757,12 @@ def _render_clinician_chat_page(service, hospital_id):
     _schedule_auto_refresh(refresh_key, expected_page="clinician_messaging")
 
 def _render_add_note_page(service, hospital_id):
+    """Renders the page for a clinician to add a new note for a patient.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     st.markdown("<h2 style='text-align: center;'>Add a New Patient Note</h2>", unsafe_allow_html=True)
     patients = service.get_all_patients(hospital_id)
     if not patients:
@@ -665,12 +793,18 @@ def _render_add_note_page(service, hospital_id):
                 st.success(f"Note added successfully for patient '{selected_patient}'.")
 
 def _render_add_patient_entry_page(service, hospital_id):
+    """Renders the page for a patient to add a new personal health entry.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     st.markdown("<h2 style='text-align: center;'>Add a New Entry</h2>", unsafe_allow_html=True)
 
-    # Display a persistent success message after saving an entry
+    # Display a persistent success message after saving an entry.
     if st.session_state.get('entry_saved_success'):
         st.success("Your entry has been saved successfully.")
-        del st.session_state['entry_saved_success'] # Clear the flag
+        del st.session_state['entry_saved_success'] # Clear the flag to prevent re-showing.
 
     form = st.form("add_patient_entry_form")
     with form:
@@ -694,10 +828,23 @@ def _render_add_patient_entry_page(service, hospital_id):
             st.rerun()
 
 def _render_view_notes_page(service, hospital_id, patient_id=None):
+    """Renders the page for viewing patient notes and entries.
+
+    This page is used by both patients (to see their own notes) and clinicians
+    (to see notes for a selected patient).
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+        patient_id (str, optional): The ID of the patient whose notes are being viewed.
+                                    If None, a selector is shown for clinicians.
+    """
     user = st.session_state.current_user
+    # Patient view
     if patient_id:
         st.markdown("<h2 style='text-align: center;'>My Medical Notes & Entries</h2>", unsafe_allow_html=True)
         notes = service.get_notes_for_patient(hospital_id, patient_id)
+    # Clinician/Admin view
     else:
         st.markdown("<h2 style='text-align: center;'>View All Patient Notes & Entries</h2>", unsafe_allow_html=True)
         patients = service.get_all_patients(hospital_id)
@@ -707,25 +854,26 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
         patient_usernames = [p['username'] for p in patients]
         selected_patient = st.selectbox("Select a patient to view their notes", patient_usernames)
         
-        # Initialize or clear the viewing state if the patient selection changes
+        # Reset the profile view state if the selected patient changes.
         if st.session_state.get('viewing_profile_for_patient') and st.session_state.viewing_profile_for_patient != selected_patient:
             st.session_state.viewing_profile_for_patient = None
 
-        # Add search functionality for clinicians
+        # Clinicians can view the patient's profile.
         if user.role == 'clinician' and selected_patient:
-            # Toggle button for viewing/hiding patient profile
+            # Toggle button for viewing/hiding the patient profile.
             if st.session_state.get('viewing_profile_for_patient') != selected_patient:
                 if st.button("View Patient Profile", key="view_patient_profile_btn"):
                     st.session_state.viewing_profile_for_patient = selected_patient
-                    st.rerun() # Rerun to show the profile immediately
+                    st.rerun()
             else:
                 if st.button("Hide Patient Profile", key="hide_patient_profile_btn"):
                     st.session_state.viewing_profile_for_patient = None
-                    st.rerun() # Rerun to hide the profile immediately
+                    st.rerun()
                 patient_data = service.get_user_by_username(hospital_id, selected_patient, 'patient')
                 _display_user_profile_details(patient_data)
             
             st.divider() # Add a divider for better separation
+        # Clinicians can search within a patient's notes.
         if user.role == 'clinician':
             search_term = st.text_input("Search notes for this patient:")
             if search_term:
@@ -739,7 +887,7 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
     if not notes:
         st.info("No notes or entries found for this patient.")
     else:
-        # Use .get() for sorting to prevent crash if timestamp is missing
+        # Display notes sorted by timestamp, newest first.
         for note in sorted(notes, key=lambda x: x.get('timestamp', ''), reverse=True):
             source = note.get("source", "clinician")
             timestamp_str = note.get('timestamp')
@@ -749,6 +897,7 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
             privacy_icon = "🔒" if note.get('is_private') else ""
             hidden_from_patient = note.get('hidden_from_patient', False)
 
+            # Determine the title and visibility of the note expander.
             if source == "patient":
                 expander_title = f"Patient Entry from {timestamp} {privacy_icon}"
                 if note.get('is_private') and user.role != 'patient':
@@ -761,7 +910,7 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                 expander_title = f"Clinical Note from {timestamp} (by {author}){hidden_suffix}"
             
             with st.expander(expander_title):
-                # Use .get() with default values for all note fields to prevent crashes
+                # Display note details, using .get() to prevent errors if fields are missing.
                 st.metric("Mood", f"{note.get('mood', 'N/A')}/10")
                 st.metric("Pain", f"{note.get('pain', 'N/A')}/10")
                 st.metric("Appetite", f"{note.get('appetite', 'N/A')}/10")
@@ -773,6 +922,7 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                     if hidden_from_patient:
                         st.info("This note is hidden from the patient and is only visible to assigned clinicians.")
                 
+                # Display AI feedback if available and approved.
                 ai_feedback = note.get('ai_feedback')
                 if ai_feedback:
                     if ai_feedback.get('status') == 'approved':
@@ -783,12 +933,11 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                         st.divider()
                         st.info("Awaiting AI feedback approval from clinician to ensure your safety.")
                 
-                # Add button to generate AI feedback if it doesn't exist
+                # Allow patients to request AI feedback on their non-private notes.
                 elif user.role == 'patient' and note.get('source') == 'patient' and not note.get('is_private'):
                     st.divider()
                     if st.button("Generate AI Feedback", key=f"gen_ai_{note.get('note_id')}"):
                         with st.spinner("Generating AI Feedback..."):
-                            # This might take longer, so the spinner is very useful here.
                             success = service.generate_and_store_ai_feedback(note.get('note_id'), hospital_id)
                         if success:
                             st.success("AI feedback is being generated. A clinician will review it shortly.")
@@ -796,9 +945,8 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                         else:
                             st.error("Could not generate feedback for this note.")
 
-
                 
-                # CRUD buttons
+                # Determine if the current user can edit or delete the note.
                 can_edit_or_delete = (user.role == 'patient' and note.get('source') == 'patient') or \
                                      (user.role == 'clinician' and note.get('source') == 'clinician' and note.get('author_id') == user.username)
 
@@ -810,13 +958,12 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                             st.session_state.editing_note_id = note.get('note_id')
                             st.rerun()
                     with c2:
-                        if st.button("Delete Note", key=f"delete_{note.get('note_id', 'unknown_id')}"): # Add default for key
-                            # Use .get() for robustness when calling service.delete_note
+                        if st.button("Delete Note", key=f"delete_{note.get('note_id', 'unknown_id')}"):
                             service.delete_note(note['note_id'], hospital_id)
                             st.success("Note deleted successfully.")
                             st.rerun()
 
-                # Note editing form
+                # If editing, display the note editing form.
                 if st.session_state.get('editing_note_id') == note.get('note_id'):
                     with st.form(key=f"edit_form_{note.get('note_id')}"):
                         st.subheader("Edit Note")
@@ -844,14 +991,21 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                             st.rerun()
 
 def _render_user_management_entry(user_key, user_data, service, hospital_id):
-    """Renders a single user entry in the admin management panel."""
+    """Renders a single user entry in the admin management panel with action buttons.
+
+    Args:
+        user_key (str): A unique key identifying the user.
+        user_data (dict): The user's data.
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     _display_user_profile_details(user_data)
     
     is_pending = user_data.get('status') == 'pending'
     
-    st.divider()
+    st.divider() # Add a divider for better separation.
     
-    # Action buttons
+    # Action buttons (Approve, Edit, Delete).
     num_cols = 3 if is_pending else 2
     cols = st.columns(num_cols)
     
@@ -874,7 +1028,7 @@ def _render_user_management_entry(user_key, user_data, service, hospital_id):
         else:
             st.error("Failed to delete user.")
 
-    # If this user is being edited, show the edit form
+    # If this user is being edited, show the edit form.
     if st.session_state.get('editing_user_key') == user_key:
         with st.form(key=f"edit_form_{user_key}"):
             st.subheader(f"Editing {user_data.get('username')}")
@@ -900,6 +1054,12 @@ def _render_user_management_entry(user_key, user_data, service, hospital_id):
                     st.error("Failed to update profile.")
 
 def _render_admin_page(service, hospital_id):
+    """Renders the main admin panel for user management and data export.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     st.markdown(f"<h2 style='text-align: center;'>Admin Panel for {hospital_id}</h2>", unsafe_allow_html=True)
     st.subheader("User Accounts")
     users_dict = service.get_all_users(hospital_id)
@@ -907,6 +1067,7 @@ def _render_admin_page(service, hospital_id):
     if not users_dict:
         st.info("No users found for this hospital.")
     else:
+        # Separate users into pending and active for display.
         active_users = {k: v for k, v in users_dict.items() if v.get('status') == 'approved'}
         pending_users = {k: v for k, v in users_dict.items() if v.get('status') == 'pending'}
 
@@ -922,9 +1083,9 @@ def _render_admin_page(service, hospital_id):
                 with st.expander(f"**{user_data.get('username')}** ({user_data.get('role', '').capitalize()})"):
                     _render_user_management_entry(user_key, user_data, service, hospital_id)
 
-    st.divider()
+    st.divider() # Add a divider for better separation.
     
-    # --- Create New User Form for Admins ---
+    # Form for admins to create new users directly.
     st.markdown("##### Create a New User")
     with st.expander("Create a New User"):
         with st.form("create_user_form"):
@@ -946,32 +1107,35 @@ def _render_admin_page(service, hospital_id):
                     st.error("Full Name, Username, and Password are required.")
                 else:
                     result = service.register_user(new_username, new_password, new_role, hospital_id, new_full_name, new_dob.isoformat(), new_sex, new_pronouns, new_bio)
-                    if result is True or result == 'pending': # Admin-created users might still be pending if they are clinicians/admins
+                    if result is True or result == 'pending':
                         st.success(f"User '{new_username}' created successfully!")
                         st.rerun()
                     else:
                         st.error(f"A profile for username '{new_username}' with the role '{new_role}' may already exist.")
 
-    st.divider()
+    st.divider() # Add a divider for better separation.
 
+    # Data export section.
     st.header("Data Export")
     st.warning(f"The following exports contain data for **{hospital_id} ONLY**.")
     hospital_data = service.get_hospital_dataset(hospital_id)
 
+    # Export as raw JSON.
     st.subheader("1. Export as Raw JSON")
     json_string = json.dumps(hospital_data, indent=4)
     st.download_button(
        "Download Hospital Data (JSON)", json_string,
        f"carelog_{hospital_id}_export_{datetime.date.today()}.json", "application/json"
     )
-    st.divider()
+    st.divider() # Add a divider for better separation.
 
+    # Export as CSV files.
     st.subheader("2. Export as CSV")
     col1, col2 = st.columns(2)
     with col1:
         users_dict_export = hospital_data.get('users', {})
-        if users_dict_export:            
-            # Prepare user data for export, excluding sensitive fields
+        if users_dict_export:
+            # Prepare user data for export, excluding sensitive fields.
             export_users_data = []
             for user_key, u_data in users_dict_export.items():
                 user_export_data = {
@@ -996,14 +1160,16 @@ def _render_admin_page(service, hospital_id):
         if notes_list:
             notes_df = pd.DataFrame(notes_list)
             desired_columns = ['timestamp', 'patient_id', 'author_id', 'source', 'mood', 'pain', 'appetite', 'notes', 'diagnoses']
+            # Ensure all desired columns exist before exporting.
             for col in desired_columns:
                 if col not in notes_df.columns: notes_df[col] = None
             st.download_button(
                 "Download Notes (CSV)", notes_df[desired_columns].to_csv(index=False).encode('utf-8'),
                 f"carelog_{hospital_id}_notes_{datetime.date.today()}.csv", "text/csv"
             )
-    st.divider()
+    st.divider() # Add a divider for better separation.
 
+    # Export as a human-readable text report.
     st.subheader("3. Export as Human-Readable Report")
     st.write("Download all notes as a simple, formatted text file for easy reading or printing.")
     notes_list = hospital_data.get('notes', [])
@@ -1011,7 +1177,6 @@ def _render_admin_page(service, hospital_id):
         st.info("There are no notes to export in this report.")
     else:
         report_content = [f"CareLog Notes Report - Generated on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n", "="*80 + "\n"]
-        # Use .get() for sorting to prevent crash if timestamp is missing
         for note in sorted(notes_list, key=lambda x: x.get('timestamp', '')):
             timestamp_str = note.get('timestamp')
             timestamp = datetime.datetime.fromisoformat(timestamp_str).strftime('%Y-%m-%d %H:%M:%S') if timestamp_str else "Unknown Date"
@@ -1030,7 +1195,7 @@ def _render_admin_page(service, hospital_id):
             ai_feedback = note.get('ai_feedback')
             if ai_feedback and ai_feedback.get('status') == 'approved':
                 report_content.extend([
-                    "\n\nAI Generated Feedback:\n" + "-"*22, # Use .get() for robustness
+                    "\n\nAI Generated Feedback:\n" + "-"*22,
                     ai_feedback.get('text', 'N/A')
                 ])
             report_content.append("\n" + "="*80 + "\n")
@@ -1042,6 +1207,12 @@ def _render_admin_page(service, hospital_id):
         )
 
 def _render_review_feedback_page(service, hospital_id):
+    """Renders the page for clinicians to review and approve AI-generated feedback.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     st.markdown("<h2 style='text-align: center;'>Review AI Feedback</h2>", unsafe_allow_html=True)
     pending_feedback = service.get_pending_feedback(hospital_id)
 
@@ -1050,7 +1221,6 @@ def _render_review_feedback_page(service, hospital_id):
         return
 
     for note in pending_feedback:
-        # Use .get() for robustness in case 'patient_id', 'timestamp', or 'notes' keys are missing
         patient_id_display = note.get('patient_id', 'Unknown Patient')
         timestamp_str = note.get('timestamp')
         timestamp_display = datetime.datetime.fromisoformat(timestamp_str).strftime('%Y-%m-%d %H:%M:%S') if timestamp_str else "Unknown Date"
@@ -1060,7 +1230,7 @@ def _render_review_feedback_page(service, hospital_id):
         st.write("**Patient's Note:**")
         st.write(notes_display)
         
-        # Allow clinician to edit the AI feedback in a text area
+        # Allow the clinician to edit the AI feedback before approval.
         edited_feedback = st.text_area(
             "**AI Generated Feedback (Edit if necessary):**",
             value=note.get('ai_feedback', {}).get('text', 'N/A'),
@@ -1068,21 +1238,26 @@ def _render_review_feedback_page(service, hospital_id):
             key=f"edit_feedback_{note.get('note_id', 'unknown_id')}"
         )
 
-        # Use columns for approve/reject buttons for a cleaner layout
+        # Approve/Reject buttons.
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("Approve Feedback", key=f"approve_{note.get('note_id', 'unknown_id')}", width='stretch', type="primary"):
-                # Use .get() for robustness when calling service.approve_ai_feedback
+            if st.button("Approve Feedback", key=f"approve_{note.get('note_id', 'unknown_id')}", use_container_width=True, type="primary"):
                 service.approve_ai_feedback(note.get('note_id'), hospital_id, edited_feedback)
                 st.success("Feedback approved!")
                 st.rerun()
         with col2:
-            if st.button("Reject Feedback", key=f"reject_{note.get('note_id', 'unknown_id')}", width='stretch'):
+            if st.button("Reject Feedback", key=f"reject_{note.get('note_id', 'unknown_id')}", use_container_width=True):
                 service.reject_ai_feedback(note.get('note_id'), hospital_id)
                 st.success("Feedback has been rejected and removed.")
                 st.rerun()
 
 def _render_assign_clinicians_page(service, hospital_id):
+    """Renders the admin page for assigning clinicians to patients.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     st.markdown("<h2 style='text-align: center;'>Assign Clinicians to Patients</h2>", unsafe_allow_html=True)
 
     patients = service.get_all_patients(hospital_id)
@@ -1105,6 +1280,7 @@ def _render_assign_clinicians_page(service, hospital_id):
         if not assigned_clinicians:
             st.info("No clinicians assigned.")
         else:
+            # List currently assigned clinicians with an "Unassign" button for each.
             for clin in assigned_clinicians:
                 col1, col2 = st.columns([4, 1])
                 col1.write(clin)
@@ -1113,8 +1289,9 @@ def _render_assign_clinicians_page(service, hospital_id):
                     st.success(f"Unassigned {clin} from {selected_patient_username}.")
                     st.rerun()
 
-        st.divider()
+        st.divider() # Add a divider for better separation.
         st.subheader("Assign a New Clinician")
+        # Show only clinicians who are not already assigned to this patient.
         available_clinicians = [c['username'] for c in clinicians if c['username'] not in assigned_clinicians]
         if not available_clinicians:
             st.write("All available clinicians are already assigned to this patient.")
@@ -1126,6 +1303,12 @@ def _render_assign_clinicians_page(service, hospital_id):
                 st.rerun()
 
 def _render_pain_alerts_page(service, hospital_id):
+    """Renders the page for clinicians to view and dismiss high-pain alerts.
+
+    Args:
+        service: The main application service instance.
+        hospital_id (str): The ID of the hospital.
+    """
     st.markdown("<h2 style='text-align: center;'>Patient Pain Alerts</h2>", unsafe_allow_html=True)
     st.info("This page lists entries where patients have reported a pain level of 10/10.")
     alerts = service.get_pain_alerts(hospital_id)
@@ -1134,6 +1317,7 @@ def _render_pain_alerts_page(service, hospital_id):
         st.success("No active pain alerts. Great!")
         return
 
+    # Display alerts sorted by timestamp, newest first.
     for alert in sorted(alerts, key=lambda x: x.get('timestamp', ''), reverse=True):
         timestamp_str = alert.get('timestamp')
         timestamp = datetime.datetime.fromisoformat(timestamp_str).strftime('%Y-%m-%d %H:%M') if timestamp_str else "Unknown"
