@@ -17,10 +17,12 @@ def generate_feedback(patient_notes, mood, pain, appetite):
     - Pain: {pain}/10
     - Appetite: {appetite}/10
 
-    Provide useful feedbacks and things that the patients can do to make themselves feel better, taking into account their reported mood, pain, and appetite levels. Be kind and encouraging. Do not assume things. Provide one paragraph of around 200 words. Only print the paragraph and nothing else. 
-
     Patient Notes:
     {patient_notes}
+
+    Provide useful feedbacks and things that the patients can do to make themselves feel better. Be kind and encouraging. 
+    Do not assume things. Provide one paragraph of around 200 words. Only print the paragraph and nothing else. 
+
 
     Feedback:
     """

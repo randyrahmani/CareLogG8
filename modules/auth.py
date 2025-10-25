@@ -35,10 +35,15 @@ class CareLogService:
             encrypted_data = encryptor.encrypt(data_to_encrypt.encode())
             f.write(encrypted_data.decode())
 
-    def register_user(self, username, password, role, hospital_id):
+    def register_user(self, username, password, role, hospital_id, full_name, dob, sex, pronouns, bio):
         is_new_hospital = hospital_id not in self._data['hospitals']
+
+        # Enforce that only an admin can create a new hospital
+        if is_new_hospital and role != 'admin':
+            return 'hospital_not_found'
+
         if is_new_hospital:
-            self._data['hospitals'][hospital_id] = {"users": {}, "notes": []}
+            self._data['hospitals'][hospital_id] = {"users": {}, "notes": [], "alerts": []}
         
         hospital_users = self._data['hospitals'][hospital_id]['users']
         user_key = f"{username}_{role}"
@@ -60,7 +65,13 @@ class CareLogService:
             'password_hash': password_hash,
             'role': role,
             'salt': salt,
-            'status': status
+            'status': status,
+            'full_name': full_name,
+            'dob': dob,
+            'sex': sex,
+            'pronouns': pronouns,
+            'bio': bio,
+            'assigned_clinicians': [] # For patients
         }
         self._save_data()
         if status == 'pending':
@@ -88,7 +99,16 @@ class CareLogService:
 
             # Use .get() for robustness in case 'password_hash' is missing from user_data
             if user_data.get('password_hash') == hash_to_check:
-                self.current_user = User(user_data['username'], user_data['password_hash'], user_data['role'])
+                self.current_user = User(
+                    username=user_data['username'],
+                    password_hash=user_data['password_hash'],
+                    role=user_data['role'],
+                    full_name=user_data.get('full_name'),
+                    dob=user_data.get('dob'),
+                    sex=user_data.get('sex'),
+                    pronouns=user_data.get('pronouns'),
+                    bio=user_data.get('bio')
+                )
                 return self.current_user
         return None
         
@@ -98,6 +118,11 @@ class CareLogService:
     def add_note(self, note: PatientNote, hospital_id):
         if hospital_id in self._data['hospitals']:
             self._data['hospitals'][hospital_id]['notes'].append(note.__dict__)
+            # Create an alert if pain is 10
+            if note.pain == 10 and note.source == 'patient':
+                alert = {"alert_id": str(note.note_id), "patient_id": note.patient_id, "timestamp": note.timestamp, "status": "new"}
+                if 'alerts' not in self._data['hospitals'][hospital_id]: self._data['hospitals'][hospital_id]['alerts'] = []
+                self._data['hospitals'][hospital_id]['alerts'].append(alert)
             self._save_data()
 
     def generate_and_store_ai_feedback(self, note_id, hospital_id):
@@ -121,14 +146,39 @@ class CareLogService:
 
     def get_notes_for_patient(self, hospital_id, patient_id):
         hospital_data = self._data['hospitals'].get(hospital_id, {})
-        return [n for n in hospital_data.get('notes', []) if n['patient_id'] == patient_id]
+        notes = [n for n in hospital_data.get('notes', []) if n.get('patient_id') == patient_id]
+        
+        # Filter for privacy if the current user is a clinician
+        if self.current_user and self.current_user.role == 'clinician':
+            # Check if clinician is assigned to this patient
+            patient_user_key = f"{patient_id}_patient"
+            patient_data = hospital_data.get('users', {}).get(patient_user_key, {})
+            assigned_clinicians = patient_data.get('assigned_clinicians', [])
+
+            if self.current_user.username in assigned_clinicians:
+                # Clinician is assigned, filter out private notes from patient
+                return [n for n in notes if not (n.get('source') == 'patient' and n.get('is_private'))]
+            return [] # Clinician not assigned, return no notes
+        return notes # Patient or admin can see all their notes
 
     def get_pending_feedback(self, hospital_id):
         pending_feedback = []
+        
+        # For clinicians, get a set of their assigned patient IDs for efficient filtering.
+        assigned_patient_ids = None
+        if self.current_user and self.current_user.role == 'clinician':
+            assigned_patients_data = self.get_all_patients(hospital_id)
+            assigned_patient_ids = {p['username'] for p in assigned_patients_data}
+
         if hospital_id in self._data['hospitals']:
             for note in self._data['hospitals'][hospital_id]['notes']:
                 if note.get('ai_feedback') and note['ai_feedback']['status'] == 'pending':
-                    pending_feedback.append(note)
+                    # If the user is a clinician, only add feedback for their assigned patients.
+                    if assigned_patient_ids is not None:
+                        if note.get('patient_id') in assigned_patient_ids:
+                            pending_feedback.append(note)
+                    else: # Admins and other roles (if any) see all pending feedback.
+                        pending_feedback.append(note)
         return pending_feedback
 
     def approve_ai_feedback(self, note_id, hospital_id, edited_feedback_text):
@@ -161,14 +211,19 @@ class CareLogService:
 
     def get_all_patients(self, hospital_id):
         hospital_users = self._data['hospitals'].get(hospital_id, {}).get('users', {})
+        current_user = self.current_user
         patient_list = []
         for user_data in hospital_users.values():
             if user_data.get('role') == 'patient':
-                patient_list.append({
-                    "username": user_data.get('username'),
-                    "role": user_data.get('role')
-                })
+                # If clinician, only show assigned patients
+                if current_user.role == 'clinician':
+                    if current_user.username in user_data.get('assigned_clinicians', []):
+                        patient_list.append(user_data)
+                else: # Admins see all patients
+                    patient_list.append(user_data)
         return patient_list
+
+    # --- New/Modified Methods for Features ---
 
     def get_all_users(self, hospital_id):
         return self._data['hospitals'].get(hospital_id, {}).get('users', {})
@@ -195,3 +250,86 @@ class CareLogService:
             self._save_data()
             return True
         return False
+
+    def update_user_profile(self, hospital_id, username, role, details):
+        user_key = f"{username}_{role}"
+        user_data = self._data['hospitals'].get(hospital_id, {}).get('users', {}).get(user_key)
+        if not user_data:
+            return False
+
+        user_data['full_name'] = details.get('full_name', user_data.get('full_name'))
+        user_data['dob'] = details.get('dob', user_data.get('dob'))
+        user_data['sex'] = details.get('sex', user_data.get('sex'))
+        user_data['pronouns'] = details.get('pronouns', user_data.get('pronouns'))
+        user_data['bio'] = details.get('bio', user_data.get('bio'))
+
+        if 'new_password' in details and details['new_password']:
+            salt = os.urandom(16).hex()
+            password_to_hash = salt + details['new_password']
+            password_hash = hashlib.sha256(password_to_hash.encode()).hexdigest()
+            user_data['salt'] = salt
+            user_data['password_hash'] = password_hash
+
+        self._save_data()
+        return True
+
+    def update_note(self, hospital_id, note_id, updated_data):
+        notes = self._data['hospitals'].get(hospital_id, {}).get('notes', [])
+        for note in notes:
+            if note.get('note_id') == note_id:
+                note.update(updated_data)
+                self._save_data()
+                return True
+        return False
+
+    def get_all_clinicians(self, hospital_id):
+        hospital_users = self._data['hospitals'].get(hospital_id, {}).get('users', {})
+        return [data for data in hospital_users.values() if data.get('role') == 'clinician' and data.get('status') == 'approved']
+
+    def assign_clinician_to_patient(self, hospital_id, patient_username, clinician_username):
+        patient_key = f"{patient_username}_patient"
+        patient_data = self._data['hospitals'].get(hospital_id, {}).get('users', {}).get(patient_key)
+        if patient_data:
+            if 'assigned_clinicians' not in patient_data:
+                patient_data['assigned_clinicians'] = []
+            if clinician_username not in patient_data['assigned_clinicians']:
+                patient_data['assigned_clinicians'].append(clinician_username)
+                self._save_data()
+                return True
+        return False
+
+    def unassign_clinician_from_patient(self, hospital_id, patient_username, clinician_username):
+        patient_key = f"{patient_username}_patient"
+        patient_data = self._data['hospitals'].get(hospital_id, {}).get('users', {}).get(patient_key)
+        if patient_data and 'assigned_clinicians' in patient_data:
+            if clinician_username in patient_data['assigned_clinicians']:
+                patient_data['assigned_clinicians'].remove(clinician_username)
+                self._save_data()
+                return True
+        return False
+
+    def search_notes(self, hospital_id, patient_id, search_term):
+        all_notes = self.get_notes_for_patient(hospital_id, patient_id)
+        if not search_term:
+            return all_notes
+        
+        search_term = search_term.lower()
+        
+        def note_matches(note):
+            notes_text = note.get('notes', '').lower()
+            diagnoses_text = note.get('diagnoses', '').lower()
+            return search_term in notes_text or search_term in diagnoses_text
+
+        return [note for note in all_notes if note_matches(note)]
+
+    def get_pain_alerts(self, hospital_id):
+        alerts = self._data['hospitals'].get(hospital_id, {}).get('alerts', [])
+        # Clinicians and Admins should see all alerts for the hospital.
+        # Patients do not have access to this function.
+        return alerts
+
+    def dismiss_alert(self, hospital_id, alert_id):
+        alerts = self._data['hospitals'].get(hospital_id, {}).get('alerts', [])
+        self._data['hospitals'][hospital_id]['alerts'] = [a for a in alerts if a.get('alert_id') != alert_id]
+        self._save_data()
+        return True

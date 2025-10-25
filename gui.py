@@ -4,6 +4,7 @@ import streamlit as st
 from modules.models import PatientNote
 import json
 import datetime
+import time
 import pandas as pd
 
 # --- Page navigation helpers ---
@@ -46,17 +47,19 @@ def show_login_form(service):
                 if not hospital_id or not username or not password:
                     st.error("Hospital ID, Username, and Password are required.")
                 else:
-                    user = service.login(username, password, role, hospital_id)
-                    if user == 'pending':
-                        st.warning("Your account is pending approval by an administrator.")
-                    elif user:
-                        st.session_state.current_user = user
-                        st.session_state.hospital_id = hospital_id
-                        st.session_state.auth_page = 'welcome'
-                        st.rerun()
-                    else:
-                        st.error("Invalid credentials for the selected role.")
-
+                    with st.spinner("Logging in..."):
+                        time.sleep(0.5)
+                        user = service.login(username, password, role, hospital_id)
+                        if user == 'pending':
+                            st.warning("Your account creation is successful but pending approval by an administrator.")
+                        elif user:
+                            st.session_state.current_user = user
+                            st.session_state.hospital_id = hospital_id
+                            st.session_state.auth_page = 'welcome'
+                            st.rerun()
+                        else:
+                            st.error("Invalid credentials for the selected role.")
+                    
 def show_register_form(service):
     """Displays the registration form."""
     st.button("← Back to Welcome", on_click=set_page_welcome)
@@ -64,23 +67,35 @@ def show_register_form(service):
     with col2:
         st.markdown("<h2 style='text-align: center;'>Create a New Account</h2>", unsafe_allow_html=True)
         with st.form("register_form"):
+            full_name = st.text_input("Full Name")
             role = st.selectbox("Select your role", ["patient", "clinician", "admin"])
             hospital_id = st.text_input("Hospital ID", help="If your hospital is new, this will create it. If it exists, you will join it.")
             username = st.text_input("Choose a Username")
             password = st.text_input("Choose a Password", type="password")
+            
+            st.markdown("---")
+            dob = st.date_input("Date of Birth", min_value=datetime.date(1900, 1, 1))
+            sex = st.selectbox("Sex", ["Male", "Female", "Intersex", "Prefer not to say"])
+            pronouns = st.text_input("Pronouns (e.g., she/her, they/them)")
+            bio = st.text_area("Bio (Optional)")
+
             submitted = st.form_submit_button("Register", width='stretch')
 
             if submitted:
-                if not hospital_id or not username or not password:
+                if not hospital_id or not username or not password or not full_name:
                     st.error("All fields are required.")
                 else:
-                    result = service.register_user(username, password, role, hospital_id)
-                    if result == 'pending':
-                        st.info("Your account registration is pending approval by an administrator.")
-                    elif result:
-                        st.success(f"User '{username}' registered for '{hospital_id}'! Please go back to log in.")
-                    else:
-                        st.error(f"A profile for username '{username}' with the role '{role}' already exists at this hospital.")
+                    with st.spinner("Registering..."):
+                        time.sleep(0.5)
+                        result = service.register_user(username, password, role, hospital_id, full_name, dob.isoformat(), sex, pronouns, bio)
+                        if result == 'pending':
+                            st.info("Your account registration is successful but pending approval by an administrator.")
+                        elif result == 'hospital_not_found':
+                            st.error(f"Hospital with ID '{hospital_id}' does not exist. An admin must create it first.")
+                        elif result:
+                            st.success(f"User '{username}' registered for '{hospital_id}'! Please go back to log in.")
+                        else:
+                            st.error(f"A profile for username '{username}' with the role '{role}' already exists at this hospital.")
 
 # --- Main Application UI ---
 
@@ -92,36 +107,140 @@ def show_main_app(service):
     st.sidebar.title(f"Welcome, {user.username}!")
     st.sidebar.info(f"**Hospital:** {hospital_id}")
     st.sidebar.write(f"**Role:** {user.role.capitalize()}")
-
+    
     if st.sidebar.button("Logout"):
-        service.logout()
-        st.session_state.current_user = None
-        st.session_state.hospital_id = None
-        st.session_state.auth_page = 'welcome'
-        st.rerun()
+        with st.spinner("Logging out..."):
+            time.sleep(0.5)
+            service.logout()
+            st.session_state.current_user = None
+            st.session_state.hospital_id = None
+            st.session_state.auth_page = 'welcome'
+            st.rerun()
 
     st.sidebar.divider()
 
+    # Page router
+    if 'page' not in st.session_state:
+        st.session_state.page = None
+
+    # Reset page state if role changes or on first load
+    if 'current_role' not in st.session_state or st.session_state.current_role != user.role:
+        st.session_state.page = None
+        st.session_state.current_role = user.role
+
     if user.role == 'clinician':
-        page = st.sidebar.radio("Navigation", ["Add Patient Note", "View Patient Notes", "Review AI Feedback"])
-        if page == "Add Patient Note":
+        # Display alerts for clinicians
+        alerts = service.get_pain_alerts(hospital_id)
+        if alerts:
+            st.sidebar.subheader(f"🚨 {len(alerts)} High-Priority Alerts")
+            for alert in sorted(alerts, key=lambda x: x.get('timestamp', ''), reverse=True):
+                timestamp_str = alert.get('timestamp')
+                timestamp = datetime.datetime.fromisoformat(timestamp_str).strftime('%H:%M') if timestamp_str else "Time N/A"
+                st.sidebar.error(f"**{alert.get('patient_id')}** at {timestamp}")
+            if st.sidebar.button("Manage Alerts"):
+                with st.spinner("Loading..."):
+                    time.sleep(0.5)
+                    st.session_state.page = "Pain Alerts"
+                    st.rerun()
+            st.sidebar.divider()
+
+        # Navigation
+        pages = ["View Patient Notes", "Add Patient Note", "Review AI Feedback", "Pain Alerts", "My Profile"]
+        if st.session_state.page not in pages: st.session_state.page = "View Patient Notes"
+        page_selection = st.sidebar.radio("Navigation", pages, index=pages.index(st.session_state.page))
+        if page_selection != st.session_state.page:
+            st.session_state.page = page_selection
+            # No spinner for radio buttons as it feels unnatural
+            st.rerun()
+
+        # Page rendering
+        if st.session_state.page == "Add Patient Note":
             _render_add_note_page(service, hospital_id)
-        elif page == "View Patient Notes":
+        elif st.session_state.page == "View Patient Notes":
             _render_view_notes_page(service, hospital_id)
-        elif page == "Review AI Feedback":
+        elif st.session_state.page == "Review AI Feedback":
             _render_review_feedback_page(service, hospital_id)
+        elif st.session_state.page == "Pain Alerts":
+            _render_pain_alerts_page(service, hospital_id)
+        elif st.session_state.page == "My Profile":
+            _render_profile_page(service, hospital_id)
+
     elif user.role == 'patient':
-        page = st.sidebar.radio("Navigation", ["View My Notes", "Add My Entry"])
-        if page == "View My Notes":
+        pages = ["Add My Entry", "View My Notes", "My Profile"]
+        if st.session_state.page not in pages: st.session_state.page = "Add My Entry"
+        page_selection = st.sidebar.radio("Navigation", pages, index=pages.index(st.session_state.page))
+        if page_selection != st.session_state.page:
+            st.session_state.page = page_selection
+            # No spinner for radio buttons
+            st.rerun()
+
+        # Page rendering
+        if st.session_state.page == "View My Notes":
             _render_view_notes_page(service, hospital_id, patient_id=user.username)
-        elif page == "Add My Entry":
+        elif st.session_state.page == "Add My Entry":
             _render_add_patient_entry_page(service, hospital_id)
+        elif st.session_state.page == "My Profile":
+            _render_profile_page(service, hospital_id)
+
     elif user.role == 'admin':
-        page = st.sidebar.radio("Navigation", ["User Management & Export", "Approve New Users"])
-        if page == "User Management & Export":
+        pages = ["User Management & Export", "Approve New Users", "Assign Clinicians", "My Profile"]
+        if st.session_state.page not in pages: st.session_state.page = "User Management & Export"
+        page_selection = st.sidebar.radio("Navigation", pages, index=pages.index(st.session_state.page))
+        if page_selection != st.session_state.page:
+            st.session_state.page = page_selection
+            # No spinner for radio buttons
+            st.rerun()
+
+        # Page rendering
+        if st.session_state.page == "User Management & Export":
             _render_admin_page(service, hospital_id)
-        elif page == "Approve New Users":
+        elif st.session_state.page == "Approve New Users":
             _render_approval_page(service, hospital_id)
+        elif st.session_state.page == "Assign Clinicians":
+            _render_assign_clinicians_page(service, hospital_id)
+        elif st.session_state.page == "My Profile":
+            _render_profile_page(service, hospital_id)
+
+def _render_profile_page(service, hospital_id):
+    st.markdown("<h2 style='text-align: center;'>My Profile</h2>", unsafe_allow_html=True)
+    user = st.session_state.current_user
+    user_data = service.get_all_users(hospital_id).get(f"{user.username}_{user.role}")
+
+    if not user_data:
+        st.error("Could not load user profile.")
+        return
+
+    with st.form("profile_form"):
+        st.write(f"**Username:** {user_data['username']}")
+        st.write(f"**Role:** {user_data['role'].capitalize()}")
+
+        full_name = st.text_input("Full Name", value=user_data.get('full_name', ''))
+        
+        dob_val = user_data.get('dob')
+        dob = st.date_input("Date of Birth", value=datetime.date.fromisoformat(dob_val) if dob_val else None, min_value=datetime.date(1900, 1, 1))
+        
+        sex_options = ["Male", "Female", "Intersex", "Prefer not to say"]
+        sex = st.selectbox("Sex", options=sex_options, index=sex_options.index(user_data.get('sex')) if user_data.get('sex') in sex_options else 0)
+        
+        pronouns = st.text_input("Pronouns", value=user_data.get('pronouns', ''))
+        bio = st.text_area("Bio", value=user_data.get('bio', ''))
+
+        st.markdown("---")
+        st.subheader("Change Password")
+        new_password = st.text_input("New Password (leave blank to keep current password)", type="password")
+
+        submitted = st.form_submit_button("Update Profile")
+        if submitted:
+            update_details = {
+                "full_name": full_name, "dob": dob.isoformat() if dob else None, "sex": sex,
+                "pronouns": pronouns, "bio": bio, "new_password": new_password
+            }
+            with st.spinner("Updating profile..."):
+                time.sleep(0.5)
+                if service.update_user_profile(hospital_id, user.username, user.role, update_details):
+                    st.success("Profile updated successfully!")
+                else:
+                    st.error("Failed to update profile.")
 
 def _render_add_note_page(service, hospital_id):
     st.markdown("<h2 style='text-align: center;'>Add a New Patient Note</h2>", unsafe_allow_html=True)
@@ -140,51 +259,67 @@ def _render_add_note_page(service, hospital_id):
         diagnoses = st.text_area("Medical Notes and Diagnoses")
         submitted = st.form_submit_button("Save Note")
         if submitted:
-            author_id = st.session_state.current_user.username
-            note = PatientNote(
-                patient_id=selected_patient, author_id=author_id, mood=mood, pain=pain,
-                appetite=appetite, notes=notes, diagnoses=diagnoses, source="clinician", hospital_id=hospital_id
-            )
-            service.add_note(note, hospital_id)
-            st.success(f"Note added successfully for patient '{selected_patient}'.")
+            with st.spinner("Saving note..."):
+                time.sleep(0.5)
+                author_id = st.session_state.current_user.username
+                note = PatientNote(
+                    patient_id=selected_patient, author_id=author_id, mood=mood, pain=pain,
+                    appetite=appetite, notes=notes, diagnoses=diagnoses, source="clinician", hospital_id=hospital_id
+                )
+                service.add_note(note, hospital_id)
+                st.success(f"Note added successfully for patient '{selected_patient}'.")
 
 def _render_add_patient_entry_page(service, hospital_id):
     st.markdown("<h2 style='text-align: center;'>Add a New Entry</h2>", unsafe_allow_html=True)
+
+    # Display a persistent success message after saving an entry
+    if st.session_state.get('entry_saved_success'):
+        st.success("Your entry has been saved successfully.")
+        del st.session_state['entry_saved_success'] # Clear the flag
+
     with st.form("add_patient_entry_form"):
         mood = st.slider("My Mood (0-10)", 0, 10, 5)
         pain = st.slider("My Pain Level (0-10)", 0, 10, 5)
         appetite = st.slider("My Appetite (0-10)", 0, 10, 5)
         notes = st.text_area("How are you feeling today?")
-        generate_feedback = st.checkbox("Generate AI Feedback")
+        is_private = st.checkbox("Make this entry private (only you can see it)", value=False)
         submitted = st.form_submit_button("Save Entry")
         if submitted:
-            user = st.session_state.current_user
-            note = PatientNote(
-                patient_id=user.username, author_id=user.username, mood=mood, pain=pain,
-                appetite=appetite, notes=notes, diagnoses="", source="patient", hospital_id=hospital_id
-            )
-            service.add_note(note, hospital_id)
-            if generate_feedback:
-                with st.spinner("Generating AI Feedback..."):
-                    service.generate_and_store_ai_feedback(note.note_id, hospital_id)
-            st.success("Your entry has been saved successfully.")
+            with st.spinner("Saving entry..."):
+                time.sleep(0.5)
+                user = st.session_state.current_user
+                note = PatientNote(
+                    patient_id=user.username, author_id=user.username, mood=mood, pain=pain,
+                    appetite=appetite, notes=notes, diagnoses="", source="patient", hospital_id=hospital_id, is_private=is_private
+                )
+                service.add_note(note, hospital_id)
+                st.session_state.entry_saved_success = True
+                st.rerun()
 
 def _render_view_notes_page(service, hospital_id, patient_id=None):
     user = st.session_state.current_user
     if patient_id:
         st.markdown("<h2 style='text-align: center;'>My Medical Notes & Entries</h2>", unsafe_allow_html=True)
         notes = service.get_notes_for_patient(hospital_id, patient_id)
-        if user.role == 'patient':
-            notes = [note for note in notes if note.get('source') == 'patient']
     else:
         st.markdown("<h2 style='text-align: center;'>View All Patient Notes & Entries</h2>", unsafe_allow_html=True)
         patients = service.get_all_patients(hospital_id)
         if not patients:
-            st.warning("No patients found for this hospital.")
+            st.warning("No patients assigned to you or no patients in this hospital.")
             return
         patient_usernames = [p['username'] for p in patients]
         selected_patient = st.selectbox("Select a patient to view their notes", patient_usernames)
-        notes = service.get_notes_for_patient(hospital_id, selected_patient)
+        
+        # Add search functionality for clinicians
+        if user.role == 'clinician':
+            search_term = st.text_input("Search notes for this patient:")
+            if search_term:
+                notes = service.search_notes(hospital_id, selected_patient, search_term)
+            else:
+                notes = service.get_notes_for_patient(hospital_id, selected_patient)
+        else:
+            notes = service.get_notes_for_patient(hospital_id, selected_patient)
+
 
     if not notes:
         st.info("No notes or entries found for this patient.")
@@ -196,10 +331,15 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
             timestamp = datetime.datetime.fromisoformat(timestamp_str).strftime('%Y-%m-%d %H:%M:%S') if timestamp_str else "Unknown Date"
             author = note.get('author_id', 'Unknown')
 
+            privacy_icon = "🔒" if note.get('is_private') else ""
+
             if source == "patient":
-                expander_title = f"Patient Entry from {timestamp}"
+                expander_title = f"Patient Entry from {timestamp} {privacy_icon}"
                 if user.role != 'patient':
                     st.info(f"Entry from Patient: {author}")
+                if note.get('is_private') and user.role != 'patient':
+                    st.write("This note is private and cannot be viewed.")
+                    continue
             else:
                 expander_title = f"Clinical Note from {timestamp} (by {author})"
                 st.warning(f"Note from Clinician: {author}")
@@ -224,9 +364,59 @@ def _render_view_notes_page(service, hospital_id, patient_id=None):
                     elif ai_feedback.get('status') == 'pending':
                         st.divider()
                         st.info("Awaiting AI feedback approval from clinician to ensure your safety.")
+                
+                # Add button to generate AI feedback if it doesn't exist
+                elif user.role == 'patient' and note.get('source') == 'patient' and not note.get('is_private'):
+                    st.divider()
+                    if st.button("Generate AI Feedback", key=f"gen_ai_{note.get('note_id')}"):
+                        with st.spinner("Generating AI Feedback..."):
+                            # This might take longer, so the spinner is very useful here.
+                            success = service.generate_and_store_ai_feedback(note.get('note_id'), hospital_id)
+                        if success:
+                            st.success("AI feedback is being generated. A clinician will review it shortly.")
+                            st.rerun()
+                        else:
+                            st.error("Could not generate feedback for this note.")
 
-                if user.role == 'patient':
-                    if st.button("Delete Note", key=f"delete_{note.get('note_id', 'unknown_id')}"): # Add default for key
+
+                
+                # CRUD buttons
+                can_edit_or_delete = (user.role == 'patient' and note.get('source') == 'patient') or \
+                                     (user.role == 'clinician' and note.get('source') == 'clinician' and note.get('author_id') == user.username)
+
+                if can_edit_or_delete:
+                    st.divider()
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("Edit Note", key=f"edit_{note.get('note_id', 'unknown_id')}"):
+                            st.session_state.editing_note_id = note.get('note_id')
+                            st.rerun()
+                    with c2:
+                        if st.button("Delete Note", key=f"delete_{note.get('note_id', 'unknown_id')}"): # Add default for key
+                            # Use .get() for robustness when calling service.delete_note
+                            service.delete_note(note['note_id'], hospital_id)
+                            st.success("Note deleted successfully.")
+                            st.rerun()
+
+                # Note editing form
+                if st.session_state.get('editing_note_id') == note.get('note_id'):
+                    with st.form(key=f"edit_form_{note.get('note_id')}"):
+                        st.subheader("Edit Note")
+                        edited_notes = st.text_area("Notes", value=note.get('notes', ''))
+                        edited_diagnoses = st.text_area("Diagnoses", value=note.get('diagnoses', '')) if source == "clinician" else None
+                        
+                        save_changes = st.form_submit_button("Save Changes")
+                        if save_changes:
+                            updated_data = {'notes': edited_notes}
+                            if edited_diagnoses is not None:
+                                updated_data['diagnoses'] = edited_diagnoses
+                            service.update_note(hospital_id, note.get('note_id'), updated_data)
+                            st.session_state.editing_note_id = None
+                            st.success("Note updated.")
+                            st.rerun()
+
+                elif user.role == 'patient' and note.get('source') != 'patient': # Patient can delete clinician notes
+                    if st.button("Delete Note", key=f"delete_{note.get('note_id', 'unknown_id')}", disabled=True):
                         # Use .get() for robustness when calling service.delete_note
                         service.delete_note(note['note_id'], hospital_id)
                         st.success("Note deleted successfully.")
@@ -397,3 +587,64 @@ def _render_review_feedback_page(service, hospital_id):
                 service.reject_ai_feedback(note.get('note_id'), hospital_id)
                 st.success("Feedback has been rejected and removed.")
                 st.rerun()
+
+def _render_assign_clinicians_page(service, hospital_id):
+    st.markdown("<h2 style='text-align: center;'>Assign Clinicians to Patients</h2>", unsafe_allow_html=True)
+
+    patients = service.get_all_patients(hospital_id)
+    clinicians = service.get_all_clinicians(hospital_id)
+
+    if not patients or not clinicians:
+        st.warning("You need at least one approved patient and one approved clinician to make assignments.")
+        return
+
+    patient_usernames = [p['username'] for p in patients]
+    selected_patient_username = st.selectbox("Select a Patient", patient_usernames)
+
+    if selected_patient_username:
+        patient_user_key = f"{selected_patient_username}_patient"
+        all_users = service.get_all_users(hospital_id)
+        patient_data = all_users.get(patient_user_key, {})
+        assigned_clinicians = patient_data.get('assigned_clinicians', [])
+
+        st.write(f"**Assigned Clinicians for {selected_patient_username}:**")
+        if not assigned_clinicians:
+            st.info("No clinicians assigned.")
+        else:
+            for clin in assigned_clinicians:
+                col1, col2 = st.columns([4, 1])
+                col1.write(clin)
+                if col2.button("Unassign", key=f"unassign_{clin}_{selected_patient_username}"):
+                    service.unassign_clinician_from_patient(hospital_id, selected_patient_username, clin)
+                    st.success(f"Unassigned {clin} from {selected_patient_username}.")
+                    st.rerun()
+
+        st.divider()
+        st.subheader("Assign a New Clinician")
+        available_clinicians = [c['username'] for c in clinicians if c['username'] not in assigned_clinicians]
+        if not available_clinicians:
+            st.write("All available clinicians are already assigned to this patient.")
+        else:
+            selected_clinician = st.selectbox("Select Clinician to Assign", available_clinicians)
+            if st.button("Assign Clinician"):
+                service.assign_clinician_to_patient(hospital_id, selected_patient_username, selected_clinician)
+                st.success(f"Assigned {selected_clinician} to {selected_patient_username}.")
+                st.rerun()
+
+def _render_pain_alerts_page(service, hospital_id):
+    st.markdown("<h2 style='text-align: center;'>Patient Pain Alerts</h2>", unsafe_allow_html=True)
+    st.info("This page lists entries where patients have reported a pain level of 10/10.")
+    alerts = service.get_pain_alerts(hospital_id)
+
+    if not alerts:
+        st.success("No active pain alerts. Great!")
+        return
+
+    for alert in sorted(alerts, key=lambda x: x.get('timestamp', ''), reverse=True):
+        timestamp_str = alert.get('timestamp')
+        timestamp = datetime.datetime.fromisoformat(timestamp_str).strftime('%Y-%m-%d %H:%M') if timestamp_str else "Unknown"
+        st.error(f"**Patient:** {alert.get('patient_id')} at **{timestamp}** reported extreme pain (10/10).")
+        if st.button("Acknowledge & Dismiss", key=f"dismiss_{alert.get('alert_id')}"):
+            service.dismiss_alert(hospital_id, alert.get('alert_id'))
+            st.success("Alert dismissed.")
+            st.rerun()
