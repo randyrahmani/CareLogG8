@@ -811,7 +811,7 @@ def _render_add_patient_entry_page(service, hospital_id):
         mood = st.slider("My Mood (0-10)", 0, 10, 5)
         pain = st.slider("My Pain Level (0-10)", 0, 10, 5)
         appetite = st.slider("My Appetite (0-10)", 0, 10, 5)
-        notes = st.text_area("How are you feeling today?")
+        notes = st.text_area("How are you feeling today? Anything you want to share?")
         is_private = st.checkbox("Make this entry private (only you can see it)", value=False)
         submitted = st.form_submit_button("Save Entry")
 
